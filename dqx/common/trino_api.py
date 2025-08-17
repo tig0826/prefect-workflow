@@ -35,7 +35,6 @@ class TrinoAPI:
         return table_name in tables
 
     def load(self, table_name, schema_name):
-        # 収集したデータを保存
         print(f'-- load table data {schema_name}.{table_name} ---')
         conn = self.connect()
         cursor = conn.cursor()
@@ -95,25 +94,56 @@ class TrinoAPI:
         cursor = conn.cursor()
         cursor.execute(create_table_query)
 
+    def _to_trino_literal(self, v):
+        # NULL 判定（pandas の NA, None など全部ここで）
+        if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
+            return "NULL"
+
+        # 1) Pandas Timestamp / datetime.datetime → TIMESTAMP リテラル
+        if isinstance(v, (pd.Timestamp, datetime.datetime)):
+            ts = v
+            # タイムゾーン付きなら JST に合わせて tz を剥がす
+            # （「JSTのローカルタイムを TIMESTAMP（tzなし）で保存」方針）
+            if getattr(ts, "tzinfo", None) is not None:
+                try:
+                    # Pandas Timestamp の場合
+                    ts = ts.tz_convert("Asia/Tokyo").tz_localize(None)
+                except Exception:
+                    # 素の datetime の場合
+                    JST = datetime.timezone(datetime.timedelta(hours=9))
+                    ts = ts.astimezone(JST).replace(tzinfo=None)
+            # マイクロ秒まで（timestamp(6)）を出す。ゼロでも問題なし
+            return f"TIMESTAMP '{ts.strftime('%Y-%m-%d %H:%M:%S.%f')}'"
+        # 2) 素の date（※ datetime のサブクラスでない場合のみ）
+        if isinstance(v, datetime.date) and not isinstance(v, datetime.datetime):
+            return f"DATE '{v.isoformat()}'"
+        # 3) 文字列はクオートをエスケープ
+        if isinstance(v, str):
+            return "'" + v.replace("'", "''") + "'"
+        # 4) bool
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        # 5) それ以外（数値など）
+        return str(v)
+
     def insert_table(self, table_name, schema_name, df, replace=False):
         print(f'-- insert to {schema_name}.{table_name} ---')
         conn = self.connect()
         cursor = conn.cursor()
         columns = ", ".join(f'"{col}"' for col in df.columns)
         values_list = []
+
         if replace:
-            cursor.execute(f"DELETE FROM \"{schema_name}\".\"{table_name}\"")
+            cursor.execute(f'DELETE FROM "{schema_name}"."{table_name}"')
+
         for _, row in df.iterrows():
-            values = ", ".join(
-                    f"'{str(v)}'" if isinstance(v, str)
-                    else f"DATE '{str(v)}'" if isinstance(v, datetime.date)
-                    else "NULL" if pd.isna(v)
-                    else str(v)
-                    for v in row
-                    )
+            values = ", ".join(self._to_trino_literal(v) for v in row)
             values_list.append(f"({values})")
+
         insert_query = f"""
-        INSERT INTO \"{schema_name}\".\"{table_name}\" ({columns})
-        VALUES """ + ", \n".join(values_list)
+        INSERT INTO "{schema_name}"."{table_name}" ({columns})
+        VALUES {", ".join(values_list)}
+        """
         print(insert_query)
         cursor.execute(insert_query)
+

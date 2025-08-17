@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def get_cheap_item_list(item_name,
                         df_all,
                         percentile=0.05,
