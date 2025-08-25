@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: stg_price_hourly
+    description: "スクレイピング結果を整形したステージングモデル"
+    columns:
+      - name: started_at
+        tests: [not_null]

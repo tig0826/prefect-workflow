@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: mrt_price_hourly
+    description: "集計などを行ったあとの価格テーブル"
+    columns:
+      - name: started_at
+        tests: [not_null]

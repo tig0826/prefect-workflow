@@ -1,0 +1,25 @@
+# dbt_project/infra/profiles.yml
+get_price_mart:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: "{{ env_var('TRINO_USER_DEV') }}"
+      password: "{{ env_var('TRINO_PASSWORD_DEV') }}"
+      database: "{{ env_var('TRINO_CATALOG_DEV', 'hive') }}"   # Trinoのcatalog
+      host: "{{ env_var('TRINO_HOST_DEV') }}"
+      port: "{{ env_var('TRINO_PORT_DEV', '8080') | int }}"
+      schema: "{{ env_var('TRINO_SCHEMA_DEV', 'dev_schema') }}"
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
+
+    prod:
+      type: trino
+      method: none
+      user: "{{ env_var('TRINO_USER_PROD') }}"
+      password: "{{ env_var('TRINO_PASSWORD_PROD') }}"
+      database: "{{ env_var('TRINO_CATALOG_PROD', 'hive') }}"
+      host: "{{ env_var('TRINO_HOST_PROD') }}"
+      port: "{{ env_var('TRINO_PORT_PROD', '8080') | int }}"
+      schema: "{{ env_var('TRINO_SCHEMA_PROD', 'prod_schema') }}"
+      threads: "{{ env_var('DBT_THREADS', '8') | int }}"

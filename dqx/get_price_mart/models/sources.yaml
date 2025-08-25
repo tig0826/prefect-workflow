@@ -1,0 +1,6 @@
+version: 2
+sources:
+  - name: dqx
+    schema: dqx
+    tables:
+      - name: price_hourly
