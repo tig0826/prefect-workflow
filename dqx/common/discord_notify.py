@@ -2,8 +2,11 @@ import requests
 from prefect.blocks.system import Secret
 
 
-def send_to_discord(message, image_path=None):
-    secret_block_webhook_url = Secret.load("discord-webhook-url")
+def send_to_discord(message, image_path=None, discord_webhook_url_name=None):
+    if discord_webhook_url_name:
+        secret_block_webhook_url = Secret.load(discord_webhook_url_name)
+    else:
+        secret_block_webhook_url = Secret.load("discord-webhook-url")
     webhook_url = secret_block_webhook_url.get()
     if image_path:
         payload = {"content": message}
