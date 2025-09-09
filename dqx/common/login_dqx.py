@@ -85,7 +85,7 @@ def login_dqx():
 # キャラクターを選択する
     char_select_url = 'https://hiroba.dqx.jp/sc/login/characterexec'
 # 選択したいキャラクターのID（rel属性の値）
-    selected_char_id = '484618740227'  # 例えば、最初のキャラクターを選択する場合
+    selected_char_id = Secret.load("dqx-character-id").get()
 
 # キャラクター選択に必要なデータを辞書に格納
     char_select_data = {
