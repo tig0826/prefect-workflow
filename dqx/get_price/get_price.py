@@ -13,8 +13,8 @@ from common.get_cheap_item_list import get_cheap_item_list, create_message_cheap
 from common.get_hourly_price import create_message_kishoukaku_hourly_price
 from common.get_price_graph import create_price_graph
 
-trino_host = 'trino.mynet'
-trino_port = 80
+trino_host = 'trino.trino.svc.cluster.local'
+trino_port = 8080
 trino_user = 'tig'
 trino_catalog = 'iceberg'
 
