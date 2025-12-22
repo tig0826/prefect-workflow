@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dqx-discord-price-bot
+  namespace: dqx-discord-price-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discord-bot
+  template:
+    metadata:
+      labels:
+        app: discord-bot
+    spec:
+      containers:
+        - name: discord-bot
+          image: tig0826/discord-price-bot:latest
+          env:
+            - name: DISCORD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: discord-bot-secret
+                  key: DISCORD_TOKEN
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: discord-bot-es
+  namespace: dqx-discord-price-bot
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-secret-store
+    kind: ClusterSecretStore
+  target:
+    name: discord-bot-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: DISCORD_TOKEN
+      remoteRef:
+        key: discord-price-bot
+        property: secretKey
+

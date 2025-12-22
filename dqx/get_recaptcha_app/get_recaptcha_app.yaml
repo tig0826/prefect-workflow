@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: get-recaptcha-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: get-recaptcha-app
+  template:
+    metadata:
+      labels:
+        app: get-recaptcha-app
+    spec:
+      containers:
+      - name: get-recaptcha-app
+        image: tig0826/get-recaptcha-app:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: get-recaptcha-service
+spec:
+  selector:
+    app: get-recaptcha-app
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 5000
+  type: ClusterIP

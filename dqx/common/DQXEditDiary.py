@@ -1,5 +1,6 @@
 import re
-
+from urllib.parse import urljoin
+from pathlib import Path
 from bs4 import BeautifulSoup
 
 from common.session_cookies import reuse_session
@@ -14,8 +15,9 @@ class DQXEditDiary:
         self.user_agent = {"User-Agent": "Mozilla/5.0"}
         self.diary_list_url = f"{self.base_url}/sc/diary/{character_id}/mode/2/page/0"
         self.delete_base_url = f"{self.base_url}/sc/diary/{character_id}/delete/2"
+        self.edit_base_url = f"{self.base_url}/sc/diary/{character_id}/edit/2"
 
-    def _extract_hidden_inputs(self, soup: BeautifulSoup): 
+    def _extract_hidden_inputs(self, soup: BeautifulSoup):
         """confirm 画面の hidden input を name:value の辞書にして返す"""
         return {
             i.get("name"): i.get("value", "")
@@ -31,6 +33,7 @@ class DQXEditDiary:
         冒険者の広場に日誌を投稿する。
         category_num: カテゴリ番号。ルームメンバー募集は50。
         message: 投稿する内容
+        publicityは通知が行かないように最初は非公開(9)にする。
         """
         # self.session.headers.update({
         #     "User-Agent": "Mozilla/5.0",
@@ -42,7 +45,7 @@ class DQXEditDiary:
             "diaryCategory": category_num,
             "diaryTitle": title,
             "diaryText": message,
-            "publicityflag": "5",
+            "publicityflag": "9", # 全体公開:5, 非公開:9, プレイヤー:1 、フレンドとチーム:2、フレンド:3、チーム:4
             "commentFlag": "1",
             "type": "0",
             **hidden0,
@@ -62,7 +65,6 @@ class DQXEditDiary:
             "Referer": self.confirm_url,
         }
         resp2 = self.session.post(self.success_url, data=payload2, headers=headers2, allow_redirects=True)
-
         return resp2.status_code, resp2
 
     def get_diary_id_list(self, title):
@@ -96,5 +98,43 @@ class DQXEditDiary:
                                   headers=headers2,
                                   allow_redirects=True)
 
+        return resp2.status_code, resp2
+
+    def change_diary(self,
+                     diary_id,
+                     category_num,
+                     title,
+                     message,
+                     publicity):
+        u"""
+        日誌の内容を編集する。
+        """
+        edit_url = f"{self.edit_base_url}/{diary_id}/{diary_id}"
+        edit_confirm_url = f"{edit_url}/confirm"
+        edit_success_url = f"{edit_url}/success"
+        payload = {
+            "diaryCategory": category_num,
+            "diaryTitle": title,
+            "diaryText": message,
+            "publicityflag": publicity, # 全体公開:5, 非公開:9, プレイヤー:1 、フレンドとチーム:2、フレンド:3、チーム:4
+            "commentFlag": "1",
+            "type": "0",
+        }
+        resp1 = self.session.post(edit_confirm_url,
+                                data=payload,
+                                headers=self.user_agent)
+        soup1 = BeautifulSoup(resp1.content, 'html.parser')
+
+        hidden1 = self._extract_hidden_inputs(soup1)
+        payload2 = {**payload, **hidden1}
+        headers2 = {
+            **self.user_agent,
+            "Origin": self.base_url,
+            "Referer": edit_confirm_url,
+        }
+        resp2 = self.session.post(edit_success_url,
+                                 data=payload2,
+                                 headers=headers2,
+                                 allow_redirects=True)
         return resp2.status_code, resp2
 
