@@ -1,55 +1,41 @@
-# ---- builder ----
-FROM python:3.11-slim AS builder
+# ステージ1: ビルダー (依存関係のインストール)
+# uv公式イメージを使用することでセットアップ時間を短縮
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc python3-dev libpq-dev \
-  && rm -rf /var/lib/apt/lists/*
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=on
-WORKDIR /src
+WORKDIR /app
 
-# 実際に使う pyproject を置く
-COPY pyproject.toml pyproject.toml
-COPY poetry.lock* .
+# 依存関係定義ファイルをコピー
+COPY pyproject.toml uv.lock ./
 
-RUN pip install --upgrade pip wheel poetry \
- && poetry --version \
- && poetry self add "poetry-plugin-export>=1.7.0"
+# 依存関係をインストール
+# --frozen: uv.lock の内容を厳守してインストール
+# --no-dev: 開発用依存関係(ruff, ipython等)を除外
+# --no-install-project: プロジェクト自体のコードはここではインストールしない
+RUN uv sync --frozen --no-install-project --no-dev
 
-# lock を pyproject に同期（依存を更新せず差分だけ反映）
-RUN poetry lock
-
-RUN poetry export -f requirements.txt --without-hashes -o /src/requirements.txt
-
-# 依存を wheel 化
-RUN pip wheel -r requirements.txt -w /wheels
-
-
-## --------------------------------------------------------------
-
-FROM python:3.11.6-slim AS runtime
+# ステージ2: ランタイム (実行環境)
+# ベースは軽量な slim イメージ
+FROM python:3.11-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=on
+    # ビルダーで作った仮想環境にパスを通すだけでOK
+    PATH="/app/.venv/bin:$PATH"
 
-# 実行時に必要なランタイム依存だけ（libpq など）
+WORKDIR /opt/prefect
+
+# 実行時に必要なシステムライブラリのみインストール
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/prefect
+# ビルダーから作成済みの仮想環境を丸ごとコピー
+COPY --from=builder /app/.venv /app/.venv
 
-# builder から完成済み wheel と requirements.txt を受け取り、オフラインでインストール
-COPY --from=builder /wheels /wheels
-COPY --from=builder /src/requirements.txt /requirements.txt
-RUN pip install --no-index --find-links=/wheels -r /requirements.txt \
- && rm -rf /wheels /root/.cache/pip
-# RUN pip install --no-index --find-links=/wheels -r /requirements.txt
-
-# アプリコードだけをコピー（余計な build ツールやキャッシュは持ち込まない）
-# 既存構成に合わせてそのまま転記
+# アプリケーションコードをコピー
 COPY get_itemname/get_itemname.py /opt/prefect/get_itemname/get_itemname.py
 COPY get_item_hash_hiroba/get_item_hash.py /opt/prefect/get_item_hash_hiroba/get_item_hash.py
 COPY get_trade_history/get_trade_history.py /opt/prefect/get_trade_history/get_trade_history.py
@@ -64,14 +50,10 @@ COPY sync_supabase_mrt_price_hourly /opt/prefect/sync_supabase_mrt_price_hourly
 COPY notify_cookie_expiration/ /opt/prefect/notify_cookie_expiration
 COPY common/ /opt/prefect/common
 
-# dbt のプロファイル配置（必要に応じて環境変数で上書き可）
+# dbt のプロファイル配置
 ENV DBT_PROFILES_DIR=/opt/dbt
 RUN mkdir -p /opt/dbt
 COPY get_price_mart/infra/profiles.yml /opt/dbt/profiles.yml
 
-# Prefect 用のメタデータ（必要なら残す）
-LABEL io.prefect.version="3.4.11"
-
-
-
-
+# Prefect 用のメタデータ
+LABEL io.prefect.version="3.1.11"
