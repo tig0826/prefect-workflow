@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: selenium-chrome
+spec:
+  selector:
+    app: get-recaptcha-app
+  ports:
+    - protocol: TCP
+      port: 4444
+      targetPort: 4444

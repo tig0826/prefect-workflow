@@ -23,7 +23,11 @@ class TrinoAPI:
         conn = self.connect()
         cursor = conn.cursor()
         cursor.execute(query)
-        df = cursor.fetchall()
+        # 結果とカラム名を取得
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        # pandas DataFrame に変換
+        df = pd.DataFrame(rows, columns=columns)
         return df
 
     def table_exists(self, table_name, schema_name):

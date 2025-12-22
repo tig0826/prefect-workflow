@@ -1,0 +1,19 @@
+{
+    "access_token": "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyM1RMTEsiLCJzdWIiOiJDQ0xYRk0iLCJpc3MiOiJGaXRiaXQiLCJ0eXAiOiJhY2Nlc3NfdG9rZW4iLCJzY29wZXMiOiJ3aHIgd251dCB3cHJvIHdzbGUgd3dlaSB3c29jIHdhY3Qgd3NldCB3bG9jIiwiZXhwIjoxNzY1MTMyNjg1LCJpYXQiOjE3NjUxMDM4ODV9.qmWdrl-d4g-HIPEpzQwblDHYZ2Kd9-FL93uQmG60km4",
+    "expires_in": 28800,
+    "refresh_token": "e4a75b1fc35c07c1880a9a3984ca783c1e06adcf04a8b3798cf51385eb6a177d",
+    "scope": [
+        "nutrition",
+        "sleep",
+        "activity",
+        "location",
+        "social",
+        "profile",
+        "weight",
+        "heartrate",
+        "settings"
+    ],
+    "token_type": "Bearer",
+    "user_id": "CCLXFM",
+    "expires_at": 1765132685
+}

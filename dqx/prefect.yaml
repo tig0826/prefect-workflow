@@ -1,0 +1,322 @@
+# Generic metadata about this project
+name: flows
+prefect-version: 3.1.11
+
+# build section allows you to manage and build docker images
+build:
+- prefect_docker.deployments.steps.build_docker_image:
+    id: build-image
+    requires: prefect-docker>=0.4.0
+    image_name: '{{ prefect.variables.dqx_image_name }}'
+    tag: latest
+    dockerfile: ./Dockerfile
+    platform: linux/amd64
+
+# push section allows you to manage if and how this project is uploaded to remote locations
+push:
+- prefect_docker.deployments.steps.push_docker_image:
+    requires: prefect-docker>=0.4.0
+    image_name: '{{ prefect.variables.dqx_image_name }}'
+    tag: '{{ build-image.tag }}'
+
+# pull section allows you to provide instructions for cloning this project in remote locations
+pull:
+- prefect.deployments.steps.set_working_directory:
+    directory: /opt/prefect
+
+# the definitions section allows you to define reusable components for your deployments
+definitions:
+  tags:
+  - dqx
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: '{{ prefect.variables.dqx_image_name }}'
+
+# the deployments section allows you to provide configuration for deploying flows
+deployments:
+- name: dqx_get_itemname
+  tags:
+  - dqx
+  schedule:
+  entrypoint: get_itemname/get_itemname.py:get_itemname
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+      tag: latest
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+  schedules: []
+
+- name: dqx_get_item_hash
+  tags:
+  - dqx
+  schedule:
+  entrypoint: get_item_hash_hiroba/get_item_hash.py:get_item_hash
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+  schedules: []
+
+- name: dqx_get_trade_history
+  tags:
+  - dqx
+  entrypoint: get_trade_history/get_trade_history.py:get_trade_history
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  schedules:
+  - cron: 1 0 * * *
+    timezone: Asia/Tokyo
+    day_or: true
+    active: true
+  enforce_parameter_schema: true
+
+- name: dqx_get_price
+  tags:
+  - dqx
+  entrypoint: get_price/get_price.py:get_price
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  schedules:
+  - cron: 1 0 * * *
+    timezone: Asia/Tokyo
+    day_or: true
+    active: true
+  enforce_parameter_schema: true
+
+- name: dqx_get_price_hourly
+  tags:
+  - dqx
+  entrypoint: get_price/get_price.py:get_price_hourly
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  schedules:
+  - cron: "1 * * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  enforce_parameter_schema: true
+
+- name: dqx_send_price_image
+  tags:
+    - dqx
+  logging:
+    level: DEBUG
+  entrypoint: get_price/get_price.py:send_price_image
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  schedules:
+  schedules: []
+  enforce_parameter_schema: true
+
+- name: dqx_get_price_mart
+  tags:
+  - dqx
+  schedule:
+  entrypoint: get_price_mart/get_price_mart.py:get_price_mart
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+  schedules: []
+
+
+- name: dqx_send_cheap_saibou_price
+  tags:
+    - dqx
+  logging:
+    level: DEBUG
+  entrypoint: get_price/get_price.py:send_cheap_saibou_price
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  schedules:
+  enforce_parameter_schema: true
+
+- name: dqx_create_llm_message
+  tags:
+  - dqx
+  schedules:
+  - cron: "15 * * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: create_llm_message/create_llm_message.py:create_llm_message
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_create_llm_erudition_message
+  tags:
+  - dqx
+  schedules:
+  - cron: "15 12 * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: create_llm_erudition_message/create_llm_erudition_message.py:create_llm_erudition_message
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_get_momon_bazzar
+  tags:
+  - dqx
+  schedules:
+  - cron: "*/10 * * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: get_momon_bazzar/get_momon_bazzar.py:get_momon_bazzar
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_post_diary
+  tags:
+  - dqx
+  schedules:
+  - cron: "0 */3 * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: post_diary/post_diary.py:post_diary
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_keepalive_streamlit
+  tags:
+  - dqx
+  schedules:
+  - cron: "0 */12 * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: keepalive_streamlit/keepalive_streamlit.py:keepalive_streamlit
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_sync_supabase_mrt_price_hourly
+  tags:
+  - dqx
+  entrypoint: sync_supabase_mrt_price_hourly/sync_supabase_mrt_price_hourly.py:sync_supabase_mrt_price_hourly
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_notify_cookie_expiration
+  tags:
+  - dqx
+  schedules:
+  - cron: "5 20 * * *"
+    timezone: "Asia/Tokyo"
+    day_or: true
+    active: true
+  entrypoint: notify_cookie_expiration/notify_cookie_expiration.py:notify_cookie_expiration
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+

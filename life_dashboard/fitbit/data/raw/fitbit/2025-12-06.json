@@ -1,0 +1,232 @@
+{
+    "activities": {
+        "activities": [
+            {
+                "logId": 338948561778340248,
+                "activityId": 90013,
+                "activityParentId": 90013,
+                "activityParentName": "Walk",
+                "name": "Walk",
+                "description": "Walking less than 2 mph, strolling very slowly",
+                "calories": 259,
+                "distance": 1.293508,
+                "steps": 2947,
+                "duration": 1811195,
+                "lastModified": "2025-12-06T06:07:32.784Z",
+                "startTime": "14:08",
+                "isFavorite": false,
+                "hasActiveZoneMinutes": true,
+                "startDate": "2025-12-06",
+                "hasStartTime": true
+            },
+            {
+                "logId": 3290021719873216448,
+                "activityId": 90013,
+                "activityParentId": 90013,
+                "activityParentName": "Walk",
+                "name": "Walk",
+                "description": "Walking less than 2 mph, strolling very slowly",
+                "calories": 235,
+                "distance": 1.110701,
+                "steps": 2532,
+                "duration": 1811628,
+                "lastModified": "2025-12-06T07:51:43.273Z",
+                "startTime": "15:59",
+                "isFavorite": false,
+                "hasActiveZoneMinutes": true,
+                "startDate": "2025-12-06",
+                "hasStartTime": true
+            },
+            {
+                "logId": 780830461326845192,
+                "activityId": 90013,
+                "activityParentId": 90013,
+                "activityParentName": "Walk",
+                "name": "Walk",
+                "description": "Walking less than 2 mph, strolling very slowly",
+                "calories": 244,
+                "distance": 0.788989,
+                "steps": 1901,
+                "duration": 1665060,
+                "lastModified": "2025-12-06T08:25:25.466Z",
+                "startTime": "16:51",
+                "isFavorite": false,
+                "hasActiveZoneMinutes": true,
+                "startDate": "2025-12-06",
+                "hasStartTime": true
+            },
+            {
+                "logId": 3653089394120958352,
+                "activityId": 90013,
+                "activityParentId": 90013,
+                "activityParentName": "Walk",
+                "name": "Walk",
+                "description": "Walking less than 2 mph, strolling very slowly",
+                "calories": 158,
+                "distance": 0.65797,
+                "steps": 1587,
+                "duration": 1159468,
+                "lastModified": "2025-12-06T10:27:27.941Z",
+                "startTime": "18:41",
+                "isFavorite": false,
+                "hasActiveZoneMinutes": true,
+                "startDate": "2025-12-06",
+                "hasStartTime": true
+            }
+        ],
+        "summary": {
+            "caloriesOut": 3623,
+            "activityCalories": 1925,
+            "caloriesBMR": 1834,
+            "activeScore": -1,
+            "steps": 14667,
+            "floors": 32,
+            "elevation": 320.0,
+            "sedentaryMinutes": 1165,
+            "lightlyActiveMinutes": 139,
+            "fairlyActiveMinutes": 39,
+            "veryActiveMinutes": 97,
+            "distances": [
+                {
+                    "activity": "total",
+                    "distance": 6.273616
+                },
+                {
+                    "activity": "tracker",
+                    "distance": 6.221665
+                },
+                {
+                    "activity": "sedentaryActive",
+                    "distance": 0.343914
+                },
+                {
+                    "activity": "lightlyActive",
+                    "distance": 0.657333
+                },
+                {
+                    "activity": "moderatelyActive",
+                    "distance": 0.670929
+                },
+                {
+                    "activity": "veryActive",
+                    "distance": 4.60144
+                },
+                {
+                    "activity": "loggedActivities",
+                    "distance": 3.8511680000000004
+                },
+                {
+                    "activity": "Walk",
+                    "distance": 1.293508
+                },
+                {
+                    "activity": "Walk",
+                    "distance": 1.110701
+                },
+                {
+                    "activity": "Walk",
+                    "distance": 0.788989
+                },
+                {
+                    "activity": "Walk",
+                    "distance": 0.65797
+                }
+            ],
+            "marginalCalories": 1552,
+            "restingHeartRate": 77,
+            "heartRateZones": [
+                {
+                    "minutes": 1371,
+                    "caloriesOut": 2951.649206,
+                    "name": "Out of Range",
+                    "min": 30,
+                    "max": 120
+                },
+                {
+                    "minutes": 64,
+                    "caloriesOut": 601.945894,
+                    "name": "Fat Burn",
+                    "min": 121,
+                    "max": 142
+                },
+                {
+                    "minutes": 5,
+                    "caloriesOut": 69.288736,
+                    "name": "Cardio",
+                    "min": 143,
+                    "max": 170
+                },
+                {
+                    "minutes": 0,
+                    "caloriesOut": 0.0,
+                    "name": "Peak",
+                    "min": 171,
+                    "max": 220
+                }
+            ]
+        },
+        "goals": {
+            "caloriesOut": 2823,
+            "steps": 10000,
+            "distance": 8.05,
+            "floors": 10,
+            "activeMinutes": 30
+        }
+    },
+    "sleep": {
+        "sleep": [],
+        "summary": {
+            "totalMinutesAsleep": 0,
+            "totalSleepRecords": 0,
+            "totalTimeInBed": 0
+        }
+    },
+    "body": {
+        "body": {
+            "bmi": 0,
+            "fat": 0,
+            "weight": 0
+        }
+    },
+    "heart": {
+        "activities-heart": [
+            {
+                "value": {
+                    "customHeartRateZones": [],
+                    "heartRateZones": [
+                        {
+                            "caloriesOut": 2942.75648,
+                            "max": 121,
+                            "min": 30,
+                            "minutes": 1371,
+                            "name": "Out of Range"
+                        },
+                        {
+                            "caloriesOut": 601.9506200000001,
+                            "max": 143,
+                            "min": 121,
+                            "minutes": 64,
+                            "name": "Fat Burn"
+                        },
+                        {
+                            "caloriesOut": 69.28928,
+                            "max": 171,
+                            "min": 143,
+                            "minutes": 5,
+                            "name": "Cardio"
+                        },
+                        {
+                            "caloriesOut": 0,
+                            "max": 220,
+                            "min": 171,
+                            "minutes": 0,
+                            "name": "Peak"
+                        }
+                    ],
+                    "restingHeartRate": 77
+                },
+                "dateTime": "2025-12-06"
+            }
+        ]
+    }
+}
