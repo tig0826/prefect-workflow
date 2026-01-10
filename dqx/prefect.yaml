@@ -84,31 +84,31 @@ deployments:
   parameters: {}
   concurrency_limit:
   schedules:
-  - cron: 1 0 * * *
+  - cron: "1 0 * * *"
     timezone: Asia/Tokyo
     day_or: true
     active: true
   enforce_parameter_schema: true
 
-- name: dqx_get_price
-  tags:
-  - dqx
-  entrypoint: get_price/get_price.py:get_price
-  work_pool:
-    name: kubernetes
-    job_variables:
-      image: tig0826/dqx
-    work_queue_name:
-  version:
-  description:
-  parameters: {}
-  concurrency_limit:
-  schedules:
-  - cron: 1 0 * * *
-    timezone: Asia/Tokyo
-    day_or: true
-    active: true
-  enforce_parameter_schema: true
+# - name: dqx_get_price
+#   tags:
+#   - dqx
+#   entrypoint: get_price/get_price.py:get_price
+#   work_pool:
+#     name: kubernetes
+#     job_variables:
+#       image: tig0826/dqx
+#     work_queue_name:
+#   version:
+#   description:
+#   parameters: {}
+#   concurrency_limit:
+#   schedules:
+#   - cron: 1 0 * * *
+#     timezone: Asia/Tokyo
+#     day_or: true
+#     active: true
+#   enforce_parameter_schema: true
 
 - name: dqx_get_price_hourly
   tags:
