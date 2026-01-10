@@ -120,8 +120,10 @@ def get_trade_sell(session):
 @flow(log_prints=True)
 def get_trade_history():
     session = reuse_session()
-    trino = TrinoAPI(host='trino.mynet',
-                     port=80,
+    trino_host = 'trino.trino.svc.cluster.local'
+    trino_port = 8080
+    trino = TrinoAPI(host=trino_host,
+                     port=trino_port,
                      user='tig',
                      catalog='iceberg')
     schema_name = "dqx"

@@ -6,8 +6,8 @@ get_price_mart:
       method: none
       user: tig
       database: iceberg
-      host: trino.mynet
-      port: 80
+      host: trino.trino.svc.cluster.local
+      port: 8080
       schema: dqx
       threads: 3
 

@@ -4,8 +4,8 @@ from common.trino_api import TrinoAPI
 
 class AnalyzePrice:
     def __init__(self, table_name, datetime_range=None):
-        self.trino = TrinoAPI(host='trino.mynet',
-                              port=80,
+        self.trino = TrinoAPI(host='trino.trino.svc.cluster.local',
+                              port=8080,
                               user='tig',
                               catalog='iceberg')
         schema_name = 'dqx'
