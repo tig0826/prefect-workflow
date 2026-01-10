@@ -7,8 +7,8 @@ from prefect.blocks.system import Secret
 
 from common.trino_api import TrinoAPI
 
-trino_host = 'trino.mynet'
-trino_port = 80
+trino_host = 'trino.trino.svc.cluster.local'
+trino_port = 8080
 trino_user = 'tig'
 trino_catalog = 'iceberg'
 
