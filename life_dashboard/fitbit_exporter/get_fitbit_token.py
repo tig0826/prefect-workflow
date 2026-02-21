@@ -4,9 +4,13 @@ import json
 import webbrowser
 import os
 
+from prefect import flow, task
+from prefect.blocks.system import Secret
+
 # === ここにさっきのIDを入れる ===
-CLIENT_ID = '23TLLK'
-CLIENT_SECRET = '61955cf9bbf82aa6a8f40c67a058e0d6'
+
+CLIENT_ID = Secret.load("fitbit-client-id").get()
+CLIENT_SECRET = Secret.load("fitbit-client-secret").get()
 REDIRECT_URI = 'http://localhost:8080/'
 # ==============================
 
