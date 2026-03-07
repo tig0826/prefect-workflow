@@ -1372,6 +1372,7 @@ dependencies = [
     { name = "supabase" },
     { name = "supabase-auth" },
     { name = "trino" },
+    { name = "undetected-chromedriver" },
     { name = "webdriver-manager" },
 ]
 
@@ -1415,6 +1416,7 @@ requires-dist = [
     { name = "supabase", specifier = ">=2.21.1" },
     { name = "supabase-auth", specifier = ">=2.24.0" },
     { name = "trino", specifier = ">=0.331.0" },
+    { name = "undetected-chromedriver", specifier = ">=3.5.5" },
     { name = "webdriver-manager", specifier = ">=4.0.2" },
 ]
 
@@ -6009,6 +6011,18 @@ sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd177
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/14/e2a54fabd4f08cd7af1c07030603c3356b74da07f7cc056e600436edfa17/tzlocal-5.3.1-py3-none-any.whl", hash = "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d", size = 18026, upload-time = "2025-03-05T21:17:39.857Z" },
 ]
+
+[[package]]
+name = "undetected-chromedriver"
+version = "3.5.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "selenium", version = "4.36.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "selenium", version = "4.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1f/98/7ab46625ce2317756e4e857fe6ac24b6378c3e8f477da26c95226ed8ccb7/undetected-chromedriver-3.5.5.tar.gz", hash = "sha256:9f945e1435005247abe17de316bcfda85b284a4177fd5f25167c78ced33b65ec", size = 65409, upload-time = "2024-02-17T17:18:36.855Z" }
 
 [[package]]
 name = "urllib3"
