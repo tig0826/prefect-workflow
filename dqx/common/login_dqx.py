@@ -1,106 +1,159 @@
-from bs4 import BeautifulSoup
+import subprocess
+import re
+
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import requests
 from prefect import task
 from prefect.blocks.system import Secret
+import time
+import random
 
-from common.get_recaptcha import get_recaptcha_token
+
+def get_chrome_major_version():
+    """OSにインストールされているChromeのメジャーバージョンを動的に取得する"""
+    try:
+        # Linuxコンテナ環境用 (google-chrome)
+        process = subprocess.run(
+            ["google-chrome", "--version"], capture_output=True, text=True
+        )
+        version_text = process.stdout
+        if not version_text:
+            process = subprocess.run(
+                [
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                    "--version",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            version_text = process.stdout
+        # "Google Chrome 146.0.7632.160" のような文字列からメジャーバージョンを抽出
+        match = re.search(r"(?:Chrome/|Google Chrome )(\d+)", version_text)
+        if match:
+            major_version = int(match.group(1))
+            print(f"Detected Chrome major version: {major_version}")
+            return major_version
+    except Exception as e:
+        print(f"Failed to detect Chrome version dynamically: {e}")
+    return None
 
 
 @task(name="login dqx", retries=5, retry_delay_seconds=5)
 def login_dqx():
-    # セッションを開始
-    session = requests.Session()
-    # ユーザーエージェントの設定
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-# ログインURL（フォームのaction属性から取得）
-    base_url = 'https://secure.square-enix.com/oauth/oa/'
-    login_endpoint = 'oauthlogin.send'
-    query_params = {
-        'client_id': 'dq_comm',
-        'response_type': 'code',
-        'svcgrp': 'Service_SEJ',
-        'retl': 'dqx_p',
-        'redirect_uri': 'https://secure.dqx.jp/sc/login/exec?p=0',
-        'alar': '1'
-    }
-
-# reCAPTCHAトークンを取得
-    recaptcha_url = "https://secure.square-enix.com/oauth/oa/oauthlogin?client_id=dq_comm&response_type=code&svcgrp=Service_SEJ&retu=https%3A%2F%2Fhiroba.dqx.jp%2Fsc%2F&retl=dqx_p&redirect_uri=https%3A%2F%2Fsecure.dqx.jp%2Fsc%2Flogin%2Fexec%3Fp%3D0&facflg=1"
-    recaptcha = get_recaptcha_token(recaptcha_url)
-    recaptcha_token = recaptcha.get_recaptcha_token()
-    # recaptcha_token = Secret.load("recaptcha-token").get()
-
-# 完全なログインURLを構築
-    login_url = f"{base_url}{login_endpoint}"
-# prefectからユーザIDとパスワードを取得
-    secret_block_user = Secret.load("dqx-user")
-    dqx_user = secret_block_user.get()
-    secret_block_passwd = Secret.load("dqx-password")
-    dqx_passwd = secret_block_passwd.get()
-# ログインに必要なデータを辞書に格納
-    login_data = {
-        '_STORED_': 'dcf06e5f47798101ac74fb0e35135d9b5f83fa22842f00c9fcc43d0b31208e93909fda8298dff852ccd860bf72939f95528245f4a3916c2bda4e5008c818e522bed0c37d51ffa715c4524f04617eaafa5997e20b6ec0afe893a5b572358cfadc840d7f2f93cba8c9cdf40e3bd7237113e6',
-        'sqexid': dqx_user,
-        'password': dqx_passwd,
-        'saveSqexid': '1',  # このフィールドはIDを記憶するかどうかの設定です。
-        'wfp': '1',
-        "g-recaptcha-response": recaptcha_token
-    }
-# ログインリクエストを送信
-    response = session.post(login_url, data=login_data, headers=headers, params=query_params)
-# レスポンスを確認
-    if response.ok:
-        print("Login successful!")
-        # ログイン後の処理をここで行います。
-    else:
-        print("Login failed with status code: ", response.status_code)
-# レスポンスからcis_session idを取得
-    soup = BeautifulSoup(response.content, 'html.parser')
-    print(soup)
-    cis_sessid = soup.find('input', {'name': 'cis_sessid'})['value']
-
-# JavaScriptで実行されるリダイレクト部分を実行
-# 2つ目のリクエストのURL
-    next_url = 'https://secure.dqx.jp/sc/login/exec?p=0'
-
-# フォームから取得したデータ
-    form_data = {
-        'cis_sessid': cis_sessid,
-        'provision': '',
-        '_c': '1'
-    }
-# 2つ目のリクエストを送信
-    next_response = session.post(next_url, data=form_data)
-# 次のレスポンスの確認
-    if next_response.ok:
-        # 2つ目のリクエストに成功した場合の処理をここに書きます
-        # 例えば、取得したい情報がある場合はそのページの内容をパースするなど
-        data = next_response.text
-        # 必要な情報を抽出する処理をここに書きます
-    else:
-        print("The second request failed with status code: ", next_response.status_code)
-
-# キャラクターを選択する
-    char_select_url = 'https://hiroba.dqx.jp/sc/login/characterexec'
-# 選択したいキャラクターのID（rel属性の値）
+    # クレデンシャルの取得
+    dqx_user = Secret.load("dqx-user").get()
+    dqx_passwd = Secret.load("dqx-password").get()
     selected_char_id = Secret.load("dqx-character-id").get()
+    # ---------------------------------------------------------
+    # 1. undetected_chromedriver のセットアップ（ステルス化）
+    # ---------------------------------------------------------
+    options = uc.ChromeOptions()
+    # ヘッドレスモード（K8s上で動かすための必須設定）
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    # ウィンドウサイズを指定して、よりリアルなPC環境に偽装
+    options.add_argument("--window-size=1920,1080")
 
-# キャラクター選択に必要なデータを辞書に格納
-    char_select_data = {
-        'cid': selected_char_id,
-        'aurl': '',  # 追加で必要な値があるか確認する
-        'murl': ''   # 追加で必要な値があるか確認する
-    }
-# キャラクター選択リクエストを送信
-    char_select_response = session.post(char_select_url, data=char_select_data)
-# キャラクター選択後のレスポンスを確認
-    if char_select_response.ok:
-        # ページの内容を取得
-        char_select_content = char_select_response.text
-# キャラクター選択が成功したか、必要な情報を抽出する処理をここに書きます
+    # バージョン不整合で落ちる場合は `version_main=120` など環境に合わせて指定しろ
+    # driver = uc.Chrome(options=options)
+    chrome_version = get_chrome_major_version()
+    if chrome_version:
+        driver = uc.Chrome(options=options, version_main=chrome_version)
     else:
-        print("Failed to select character with status code:", char_select_response.status_code)
+        driver = uc.Chrome(options=options)
+    session = requests.Session()
+    # ucが自動で設定したリアルなUser-Agentを引っこ抜いて使い回す
+    user_agent = driver.execute_script("return navigator.userAgent;")
+    session.headers.update({"User-Agent": user_agent})
+
+    try:
+        # ---------------------------------------------------------
+        # 2. ログインページへアクセス
+        # ---------------------------------------------------------
+        login_url = "https://secure.square-enix.com/oauth/oa/oauthlogin?client_id=dq_comm&response_type=code&svcgrp=Service_SEJ&retu=https%3A%2F%2Fhiroba.dqx.jp%2Fsc%2F&retl=dqx_p&redirect_uri=https%3A%2F%2Fsecure.dqx.jp%2Fsc%2Flogin%2Fexec%3Fp%3D0&facflg=1"
+        driver.get(login_url)
+
+        # ---------------------------------------------------------
+        # 3. 人間らしい入力操作（ゆらぎの演出）
+        # ---------------------------------------------------------
+        print("Page loaded. Emulating human behavior...")
+        time.sleep(
+            random.uniform(2.0, 4.0)
+        )  # ページ読み込み後、人間がフォームを認識するまでの間
+
+        sqexid_input = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "sqexid"))
+        )
+
+        # IDを1文字ずつ、ランダムな間隔でタイピングする
+        for char in dqx_user:
+            sqexid_input.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.2))
+
+        time.sleep(random.uniform(0.5, 1.5))  # 次のフィールドへ移動する間
+
+        pw_input = driver.find_element(By.ID, "password")
+        # パスワードも同様に1文字ずつタイピングする
+        for char in dqx_passwd:
+            pw_input.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.2))
+
+        time.sleep(random.uniform(1.0, 2.5))  # ログインボタンを押すか迷う時間
+
+        # ---------------------------------------------------------
+        # 4. ログインボタンのクリック
+        # ---------------------------------------------------------
+        driver.find_element(By.ID, "login-button").click()
+
+        # ---------------------------------------------------------
+        # 5. ログイン完了を待機し、Cookieを強奪
+        # ---------------------------------------------------------
+        print("Waiting for login authorization and redirect...")
+
+        # lambdaを使って、現在のURLにどちらかの文字列が含まれるまで待機させる
+        WebDriverWait(driver, 45).until(
+            lambda d: (
+                "login/exec" in d.current_url or "hiroba.dqx.jp/sc/" in d.current_url
+            )
+        )
+        time.sleep(3)  # Cookieがブラウザに完全にセットされるのを待つ
+
+        for cookie in driver.get_cookies():
+            session.cookies.set(cookie["name"], cookie["value"])
+
+        print(
+            "Login successful via undetected_chromedriver. Cookies extracted."
+        )  # ---------------------------------------------------------
+
+    except Exception as e:
+        print(f"Selenium Login Failed: {e}")
+        print(f"Current URL at failure: {driver.current_url}")
+        # ★デバッグ用：エラー時の画面状態を画像として保存する★
+        driver.save_screenshot("/tmp/dqx_login_error.png")
+        print("Saved screenshot to /tmp/dqx_login_error.png")
+        raise
+    finally:
+        driver.quit()
+
+    # ---------------------------------------------------------
+    # 6. キャラクター選択（以降は requests）
+    # ---------------------------------------------------------
+    char_select_url = "https://hiroba.dqx.jp/sc/login/characterexec"
+    char_select_data = {"cid": selected_char_id, "aurl": "", "murl": ""}
+
+    char_select_response = session.post(char_select_url, data=char_select_data)
+
+    if char_select_response.ok:
+        print("Character selected successfully. Session is ready for scraping.")
+    else:
+        print(
+            "Failed to select character with status code:",
+            char_select_response.status_code,
+        )
+        raise Exception("Character selection POST failed.")
 
     return session

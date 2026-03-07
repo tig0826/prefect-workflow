@@ -33,16 +33,16 @@ class TrinoAPI:
     def table_exists(self, table_name, schema_name):
         conn = self.connect()
         cursor = conn.cursor()
-        cursor.execute(f"SHOW TABLES FROM \"{schema_name}\"")
+        cursor.execute(f'SHOW TABLES FROM "{schema_name}"')
         tables = cursor.fetchall()
         tables = [table[0] for table in tables]
         return table_name in tables
 
     def load(self, table_name, schema_name):
-        print(f'-- load table data {schema_name}.{table_name} ---')
+        print(f"-- load table data {schema_name}.{table_name} ---")
         conn = self.connect()
         cursor = conn.cursor()
-        sql_load = f"SELECT * FROM \"{schema_name}\".\"{table_name}\""
+        sql_load = f'SELECT * FROM "{schema_name}"."{table_name}"'
         cursor.execute(sql_load)
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
@@ -54,30 +54,27 @@ class TrinoAPI:
             "int64": "INTEGER",
             "float64": "DOUBLE",
             "object": "VARCHAR",
-            "datetime64[ns]": "TIMESTAMP"
+            "datetime64[ns]": "TIMESTAMP",
         }
         columns = []
         for col, dtype in df.dtypes.items():
             trino_type = pandas_to_trino_type.get(str(dtype), "VARCHAR")
-            columns.append(f"\"{col}\" {trino_type}")
+            columns.append(f'"{col}" {trino_type}')
         table_columns = ",\n    ".join(columns)
         return table_columns
 
     def create_schema(self, schema_name):
-        print(f'-- create schema {schema_name} ---')
+        print(f"-- create schema {schema_name} ---")
         conn = self.connect()
         cursor = conn.cursor()
         sql_create_schema = f"""CREATE SCHEMA IF NOT EXISTS \"{schema_name}\"
         with (location = 's3a://iceberg/warehouse/{schema_name}')"""
         cursor.execute(sql_create_schema)
 
-    def create_table(self,
-                     table_name,
-                     schema_name,
-                     table_columns,
-                     partitioning=None,
-                     sorted_by=None):
-        print(f'-- create table {schema_name}.{table_name} ---')
+    def create_table(
+        self, table_name, schema_name, table_columns, partitioning=None, sorted_by=None
+    ):
+        print(f"-- create table {schema_name}.{table_name} ---")
         with_options = ["format = 'PARQUET'"]
         if partitioning:
             partitioning_str = "', '".join(partitioning)
@@ -131,7 +128,7 @@ class TrinoAPI:
         return str(v)
 
     def insert_table(self, table_name, schema_name, df, replace=False):
-        print(f'-- insert to {schema_name}.{table_name} ---')
+        print(f"-- insert to {schema_name}.{table_name} ---")
         conn = self.connect()
         cursor = conn.cursor()
         columns = ", ".join(f'"{col}"' for col in df.columns)
@@ -150,4 +147,3 @@ class TrinoAPI:
         """
         print(insert_query)
         cursor.execute(insert_query)
-
