@@ -1,6 +1,7 @@
-from datetime import datetime, timezone, timedelta
+import asyncio
+from datetime import datetime, timezone
 
-from prefect import flow, get_run_logger
+from prefect import flow, task, get_run_logger
 from prefect.client.orchestration import get_client
 
 from common.discord_notify import send_to_discord
@@ -9,18 +10,26 @@ COOKIE_SECRET_NAME = "dqx-session-cookies"
 MAX_AGE_DAYS = 25
 
 
+@task(name="fetch secret updated time")
+def get_secret_updated_at(secret_name: str):
+    # 内部に非同期処理を隔離する
+    async def _fetch():
+        async with get_client() as client:
+            block_doc = await client.read_block_document_by_name(
+                name=secret_name,
+                block_type_slug="secret",
+                include_secrets=False,
+            )
+            return block_doc.updated
+
+    return asyncio.run(_fetch())
+
+
 @flow(name="monitor dqx cookie secret age")
-async def notify_cookie_expiration():
+def notify_cookie_expiration():
     logger = get_run_logger()
 
-    async with get_client() as client:
-        block_doc = await client.read_block_document_by_name(
-            name=COOKIE_SECRET_NAME,
-            block_type_slug="secret",
-            include_secrets=False,
-        )
-
-    updated = block_doc.updated
+    updated = get_secret_updated_at(COOKIE_SECRET_NAME)
     now = datetime.now(timezone.utc)
     age = now - updated
     age_days = age.days
