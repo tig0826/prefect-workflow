@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Optional
 
 from prefect import flow, task
@@ -41,14 +41,8 @@ def asken_flow(target_date: Optional[date] = None):
     else:
         today = date.today()
         target_dates.append(today)
-        # これにより、深夜に記録した夜食データを朝イチで確実に回収する。
-        current_hour = datetime.now().hour
-        if current_hour < 10:
-            yesterday = today - timedelta(days=1)
-            target_dates.append(yesterday)
-            print(
-                f"🌅 朝の定期実行(現在{current_hour}時)を検知。昨日のデータ({yesterday})も再取得対象に追加する。"
-            )
+        yesterday = today - timedelta(days=1)
+        target_dates.append(yesterday)
 
     print(f"🚀 あすけんデータ抽出パイプラインを開始。対象日: {target_dates}")
     # 認証情報の取得
@@ -87,5 +81,4 @@ def asken_flow(target_date: Optional[date] = None):
 
 if __name__ == "__main__":
     # ローカルテスト用
-    # 実行する前に `prefect block register` や UI で Secret を作っておけよ。
-    asken()
+    asken_flow()
