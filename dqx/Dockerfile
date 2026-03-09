@@ -21,8 +21,8 @@ RUN uv sync --frozen --no-install-project --no-dev
 FROM python:3.11-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
-    # ビルダーで作った仮想環境にパスを通すだけでOK
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/opt/prefect:$PYTHONPATH"
 
 WORKDIR /opt/prefect
 
@@ -30,7 +30,15 @@ WORKDIR /opt/prefect
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     fonts-noto-cjk \
-  && rm -rf /var/lib/apt/lists/*
+    wget \
+    gnupg \
+    ca-certificates \
+ && wget -qO - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -f /etc/apt/sources.list.d/google-chrome.list
 
 # ビルダーから作成済みの仮想環境を丸ごとコピー
 COPY --from=builder /app/.venv /app/.venv
