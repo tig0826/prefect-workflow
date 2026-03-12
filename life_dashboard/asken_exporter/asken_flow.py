@@ -1,6 +1,7 @@
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from prefect import flow, task
 from prefect.blocks.system import Secret
@@ -34,17 +35,17 @@ def asken_flow(target_date: Optional[date] = None):
     スケジュール実行時は引数なしで呼ばれ、「昨日」のデータを取得する。
     """
     # 取得対象の日付リストを作成
-    target_dates: List[date] = []
-
+    target_dates: list[date] = []
     if target_date:
         target_dates.append(target_date)
     else:
-        today = date.today()
-        target_dates.append(today)
-        yesterday = today - timedelta(days=1)
-        target_dates.append(yesterday)
+        jst_now = datetime.now(ZoneInfo("Asia/Tokyo"))
+        today = jst_now.date()
+        target_dates.extend([today - timedelta(days=1), today])
+    print(
+        f"対象日付: {[d.strftime('%Y-%m-%d') for d in target_dates]} のFitbitデータ抽出を開始..."
+    )
 
-    print(f"🚀 あすけんデータ抽出パイプラインを開始。対象日: {target_dates}")
     # 認証情報の取得
     email, password = get_credentials()
     has_error = False
