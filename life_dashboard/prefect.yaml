@@ -1,0 +1,88 @@
+# Generic metadata about this project
+name: flows
+prefect-version: 3.1.11
+
+# build section allows you to manage and build docker images
+build:
+  - prefect_docker.deployments.steps.build_docker_image:
+      id: build-image
+      requires: prefect-docker>=0.4.0
+      image_name: "{{ prefect.variables.life_image_name }}"
+      tag: latest
+      dockerfile: ./Dockerfile
+      platform: linux/amd64
+
+# push section allows you to manage if and how this project is uploaded to remote locations
+push:
+  - prefect_docker.deployments.steps.push_docker_image:
+      requires: prefect-docker>=0.4.0
+      image_name: "{{ prefect.variables.life_image_name }}"
+      tag: "{{ build-image.tag }}"
+
+# pull section allows you to provide instructions for cloning this project in remote locations
+pull:
+  - prefect.deployments.steps.set_working_directory:
+      directory: /opt/prefect
+
+# the definitions section allows you to define reusable components for your deployments
+definitions:
+  tags: &common_tags
+    - life
+  work_pool: &common_work_pool
+    name: kubernetes
+    job_variables:
+      image: "{{ prefect.variables.life_image_name }}"
+      env:
+        PREFECT_LOGGING_EXTRA_LOGGERS: "fitbit_exporter,asken_exporter,aw_exporter"
+
+# the deployments section allows you to provide configuration for deploying flows
+deployments:
+  - name: life_bronze_asken
+    tags: *common_tags
+    entrypoint: asken_exporter/asken_flow.py:asken_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "30 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
+
+  - name: life_bronze_fitbit
+    tags: *common_tags
+    entrypoint: fitbit_exporter/fitbit_flow.py:fitbit_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "0 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
+
+  - name: life_bronze_aw
+    tags: *common_tags
+    entrypoint: aw_exporter/aw_flow.py:aw_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "0 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
+
+  - name: life_bronze_owntracks
+    tags: *common_tags
+    entrypoint: owntracks_exporter/owntracks_flow.py:owntracks_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "10 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
+
+  - name: life_data_pipeline
+    tags: *common_tags
+    entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "40 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true

@@ -1,0 +1,47 @@
+[0m04:53:11.686787 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1092cef00>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1095bf1d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1095bc140>]}
+
+
+============================== 04:53:11.701951 | fd76361b-a3a8-41c8-88d8-db52b82c8fc5 ==============================
+[0m04:53:11.701951 [info ] [MainThread]: Running with dbt=1.11.7
+[0m04:53:11.702192 [debug] [MainThread]: running dbt with arguments {'target_path': 'None', 'use_experimental_parser': 'False', 'no_print': 'None', 'empty': 'None', 'version_check': 'True', 'profiles_dir': '/Users/tig/.dbt', 'debug': 'False', 'log_cache_events': 'False', 'log_format': 'default', 'indirect_selection': 'eager', 'partial_parse': 'True', 'static_parser': 'True', 'warn_error': 'None', 'send_anonymous_usage_stats': 'True', 'cache_selected_only': 'False', 'quiet': 'False', 'write_json': 'True', 'invocation_command': 'dbt init dbt_lifeos', 'use_colors': 'True', 'fail_fast': 'False', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'log_path': 'logs', 'printer_width': '80', 'introspect': 'True'}
+[0m04:53:11.723877 [info ] [MainThread]: Creating dbt configuration folder at /Users/tig/.dbt
+[0m04:53:11.724864 [debug] [MainThread]: Starter project path: /Users/tig/.cache/uv/archive-v0/2nzJmlR0PDsi2vFt95sVq/lib/python3.12/site-packages/dbt/include/starter_project
+[0m04:53:11.727947 [info ] [MainThread]: 
+Your new dbt project "dbt_lifeos" was created!
+
+For more information on how to configure the profiles.yml file,
+please consult the dbt documentation here:
+
+  https://docs.getdbt.com/docs/configure-your-profile
+
+One more thing:
+
+Need help? Don't hesitate to reach out to us via GitHub issues or on Slack:
+
+  https://community.getdbt.com/
+
+Happy modeling!
+
+[0m04:53:11.728116 [info ] [MainThread]: Setting up your profile.
+[0m04:53:19.135836 [info ] [MainThread]: Profile dbt_lifeos written to /Users/tig/.dbt/profiles.yml using target's sample configuration. Once updated, you'll be able to start developing with dbt.
+[0m04:53:19.136174 [debug] [MainThread]: Resource report: {"command_name": "init", "command_success": true, "command_wall_clock_time": 7.483931, "process_in_blocks": "0", "process_kernel_time": 0.302193, "process_mem_max_rss": "142442496", "process_out_blocks": "0", "process_user_time": 1.450766}
+[0m04:53:19.136420 [debug] [MainThread]: Command `dbt init` succeeded at 04:53:19.136360 after 7.48 seconds
+[0m04:53:19.136634 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1092b2780>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109219820>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10921ab10>]}
+[0m04:53:19.136843 [debug] [MainThread]: Flushing usage events
+[0m04:53:20.072226 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m02:01:25.695227 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d598a40>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9c7080>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9c6ba0>]}
+
+
+============================== 02:01:25.697813 | 6705cb73-c3d8-4a58-afd5-f23a529d1f3b ==============================
+[0m02:01:25.697813 [info ] [MainThread]: Running with dbt=1.11.7
+[0m02:01:25.698054 [debug] [MainThread]: running dbt with arguments {'no_print': 'None', 'indirect_selection': 'eager', 'write_json': 'True', 'cache_selected_only': 'False', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'send_anonymous_usage_stats': 'True', 'log_path': 'logs', 'fail_fast': 'False', 'printer_width': '80', 'profiles_dir': '/Users/tig/.dbt', 'target_path': 'None', 'use_experimental_parser': 'False', 'static_parser': 'True', 'log_cache_events': 'False', 'introspect': 'True', 'version_check': 'True', 'warn_error': 'None', 'partial_parse': 'True', 'quiet': 'False', 'invocation_command': 'dbt build --select models/silver models/intermediate --full-refresh', 'use_colors': 'True', 'empty': 'False', 'log_format': 'default', 'debug': 'False'}
+[0m02:01:25.698335 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m02:01:25.698575 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.03712233, "process_in_blocks": "0", "process_kernel_time": 0.108753, "process_mem_max_rss": "109658112", "process_out_blocks": "0", "process_user_time": 0.52087}
+[0m02:01:25.698757 [debug] [MainThread]: Command `dbt build` failed at 02:01:25.698721 after 0.04 seconds
+[0m02:01:25.698880 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d425dc0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d67ed50>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9c71d0>]}
+[0m02:01:25.699001 [debug] [MainThread]: Flushing usage events
+[0m02:01:26.478931 [debug] [MainThread]: An error was encountered while trying to flush usage events

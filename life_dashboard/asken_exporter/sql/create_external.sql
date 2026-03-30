@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS hive.life.asken_external (
+CREATE TABLE IF NOT EXISTS hive.life_bronze.asken_external (
     "date" VARCHAR,
     meal_records ROW(
         breakfast ROW(total_kcal DOUBLE, items ARRAY(ROW(name VARCHAR, quantity VARCHAR, kcal DOUBLE))),
