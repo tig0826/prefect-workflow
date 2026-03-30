@@ -1,18 +1,23 @@
 [project]
 name = "life-dashboard"
 version = "0.1.0"
-description = ""
-authors = [
-    {name = "tig0826",email = "tigcr0826@gmail.com"}
-]
+description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "ipython (>=9.7.0,<10.0.0)",
-    "fitbit (>=0.3.1,<0.4.0)"
+    "aw-client>=0.5.15",
+    "beautifulsoup4>=4.14.3",
+    "boto3>=1.42.51",
+    "fitbit>=0.3.1",
+    "pandas>=3.0.1",
+    "prefect>=3.6.17",
+    "prefect-docker>=0.7.1",
+    "trino>=0.336.0",
+    "dbt-trino",
+    "prefect-dbt>=0.7.6",
+    "googlemaps>=4.10.0",
 ]
-
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+[dependency-groups]
+dev = [
+    "ipython>=9.8.0",
+]

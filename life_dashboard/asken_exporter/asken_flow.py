@@ -43,7 +43,7 @@ def asken_flow(target_date: Optional[date] = None):
         today = jst_now.date()
         target_dates.extend([today - timedelta(days=1), today])
     print(
-        f"対象日付: {[d.strftime('%Y-%m-%d') for d in target_dates]} のFitbitデータ抽出を開始..."
+        f"対象日付: {[d.strftime('%Y-%m-%d') for d in target_dates]} のあすけんデータ抽出を開始..."
     )
 
     # 認証情報の取得

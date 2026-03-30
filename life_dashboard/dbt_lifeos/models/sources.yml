@@ -1,0 +1,17 @@
+version: 2
+sources:
+  - name: hive_life_bronze
+    database: hive
+    schema: life_bronze
+    tables:
+      - name: aw_window_tignomacbook_pro_external
+      - name: aw_afk_tignomacbook_pro_external
+      - name: aw_window_a1002995_external
+      - name: aw_afk_a1002995_external
+      - name: aw_window_desktop_o8tfag0_external
+      - name: aw_afk_desktop_o8tfag0_external
+      - name: aw_android_test_external
+      - name: aw_android_unlock_external
+      - name: asken_external
+      - name: fitbit_external
+      - name: owntracks_external

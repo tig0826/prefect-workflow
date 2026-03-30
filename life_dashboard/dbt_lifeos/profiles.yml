@@ -1,0 +1,12 @@
+dbt_lifeos:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none
+      user: admin
+      host: trino.mynet
+      port: 80
+      catalog: iceberg
+      schema: life
+      threads: 4
