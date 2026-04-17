@@ -42,7 +42,13 @@ split_events AS (
 
 categorized AS (
     SELECT
-        to_hex(md5(to_utf8(CAST(aw_event_pk AS varchar) || '|' || to_iso8601(start_ts) || '|' || CAST(is_afk AS varchar)))) AS event_pk,
+        -- 🌟 防弾チョッキ1: end_ts もハッシュに含めてIDの被りを防ぐ！
+        to_hex(md5(to_utf8(
+            CAST(aw_event_pk AS varchar) || '|' || 
+            to_iso8601(start_ts) || '|' || 
+            to_iso8601(end_ts) || '|' || 
+            CAST(is_afk AS varchar)
+        ))) AS event_pk,
         CAST(start_ts AS date) AS event_date_jst,
         'activitywatch' AS source_system,
         'aw_window' AS source_detail,
@@ -79,7 +85,8 @@ categorized AS (
             WHEN LOWER(app_name_raw) LIKE '%ニコニコ漫画%' OR LOWER(window_title_raw) LIKE '%ニコニコ漫画%'
               OR LOWER(app_name_raw) LIKE '%コミックDAYS%' OR LOWER(window_title_raw) LIKE '%コミックDAYS%'
               OR LOWER(app_name_raw) LIKE '%サンデーうぇぶり%' OR LOWER(window_title_raw) LIKE '%サンデーうぇぶり%'
-              OR LOWER(app_name_raw) LIKE '%マンガワン%' OR LOWER(window_title_raw) LIKE '%マンガワン%' THEN 'MANGA'
+              OR LOWER(app_name_raw) LIKE '%マンガワン%' OR LOWER(window_title_raw) LIKE '%マンガワン%'
+              OR LOWER(app_name_raw) LIKE '%ヤンジャン%' OR LOWER(window_title_raw) LIKE '%ヤンジャン%' THEN 'MANGA'
             WHEN LOWER(app_name_raw) LIKE '%chrome%' OR LOWER(app_name_raw) LIKE '%edge%' OR LOWER(app_name_raw) LIKE '%brave%' THEN 'BROWSING'
             WHEN usage_type = 'gaming' THEN 'GAME'
             WHEN LOWER(window_title_raw) LIKE '%amazon%' OR LOWER(window_title_raw) LIKE '%楽天市場%' THEN 'LIFE'
@@ -113,12 +120,21 @@ categorized AS (
             WHEN LOWER(app_name_raw) LIKE '%コミックDAYS%' OR LOWER(window_title_raw) LIKE '%コミックDAYS%' THEN 'コミックDAYS'
             WHEN LOWER(app_name_raw) LIKE '%サンデーうぇぶり%' OR LOWER(window_title_raw) LIKE '%サンデーうぇぶり%' THEN 'サンデーうぇぶり'
             WHEN LOWER(app_name_raw) LIKE '%マンガワン%' OR LOWER(window_title_raw) LIKE '%マンガワン%' THEN 'マンガワン'
+            WHEN LOWER(app_name_raw) LIKE '%ヤンジャン%' OR LOWER(window_title_raw) LIKE '%ヤンジャン%' THEN 'ヤンジャン＋'
             WHEN usage_type = 'gaming' THEN 'ゲーム'
             WHEN LOWER(window_title_raw) LIKE '%amazon%' OR LOWER(window_title_raw) LIKE '%楽天市場%' THEN 'ネットショッピング'
             WHEN LOWER(app_name_raw) LIKE '%uber eats%' THEN 'Uber Eats'
             ELSE 'ネットサーフィン'
         END AS cat_sub
     FROM split_events
+),
+
+-- 🌟 防弾チョッキ2: 最後に ROW_NUMBER() を使って、万が一同じPKが発生しても完全に弾き飛ばす！
+deduped_final AS (
+    SELECT 
+        *,
+        ROW_NUMBER() OVER (PARTITION BY event_pk ORDER BY start_ts) as rn
+    FROM categorized
 )
 
 SELECT
@@ -144,4 +160,5 @@ SELECT
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
     END AS priority
-FROM categorized
+FROM deduped_final
+WHERE rn = 1

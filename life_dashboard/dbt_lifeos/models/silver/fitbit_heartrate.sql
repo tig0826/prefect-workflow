@@ -34,7 +34,7 @@ unnested AS (
 final_transformed AS (
     SELECT
         to_hex(md5(to_utf8(dt || 'T' || time_str))) AS heartrate_pk,
-        CAST(dt || ' ' || time_str || ' Asia/Tokyo' AS TIMESTAMP WITH TIME ZONE) AS timestamp_jst,
+        CAST(dt || ' ' || time_str AS TIMESTAMP) AS timestamp_jst,
         heart_rate
     FROM unnested
     WHERE time_str IS NOT NULL

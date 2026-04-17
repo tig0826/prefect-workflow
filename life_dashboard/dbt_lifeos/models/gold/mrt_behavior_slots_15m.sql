@@ -15,7 +15,6 @@ WITH bounds AS (
 
 time_spine AS (
     SELECT
-        -- 🚨 ここから AT TIME ZONE を削除！これで「9時間のズレ」が完全に消滅します！
         slot_start_local AS time_slot_jst,
         (slot_start_local + INTERVAL '15' MINUTE) AS time_slot_end_jst
     FROM bounds b
@@ -25,7 +24,6 @@ time_spine AS (
 events AS (
     SELECT *
     FROM {{ ref('int_all_behavior_events') }}
-    -- 🌟 AFKの時間はダッシュボードに表示せず、計算からも完全に消去する（アンタの希望通り！）
     WHERE NOT is_afk
     {% if is_incremental() %}
       AND start_ts < (SELECT window_end_local FROM bounds)
@@ -114,4 +112,4 @@ SELECT
     overlap_sec,
     CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp) AS transformed_at_jst
 FROM final_slots
-WHERE time_slot_jst < current_timestamp AT TIME ZONE 'Asia/Tokyo'
+WHERE time_slot_jst < CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp)

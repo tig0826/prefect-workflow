@@ -15,21 +15,23 @@ WITH src AS (
         to_spherical_geography(ST_Point(s.centroid_longitude, s.centroid_latitude))
     ) > 150.0
     {% if is_incremental() %}
-      AND s.stay_start_time >= date_add(
+      -- 🌟 修正1: 右辺を CAST(... AS TIMESTAMP) で包んで暗黙のキャストエラーを防ぐ
+      AND s.stay_start_time >= CAST(date_add(
         'day',
         -{{ reprocess_days }},
         date_trunc('day', current_timestamp AT TIME ZONE 'Asia/Tokyo')
-      )
+      ) AS TIMESTAMP)
     {% endif %}
 )
 
 SELECT
     CAST(stay_pk AS varchar) AS event_pk,
-    CAST(date((stay_start_time AT TIME ZONE 'Asia/Tokyo')) AS date) AS event_date_jst,
+    -- 🌟 修正2: すでにJSTなので AT TIME ZONE 'Asia/Tokyo' を剥ぎ取る！
+    CAST(CAST(stay_start_time AS date) AS date) AS event_date_jst,
     'owntracks' AS source_system,
     'owntracks_outing' AS source_detail,
-    CAST(stay_start_time AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS start_ts,
-    CAST(stay_end_time AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS end_ts,
+    CAST(stay_start_time AS TIMESTAMP) AS start_ts,
+    CAST(stay_end_time AS TIMESTAMP) AS end_ts,
     CAST(NULL AS varchar) AS raw_app_name,
     CAST(NULL AS varchar) AS raw_window_title,
     CAST(NULL AS varchar) AS raw_usage_type,
