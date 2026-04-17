@@ -7,11 +7,11 @@
 
 WITH base AS (
     SELECT
-        dt,
+    CAST(dt AS DATE) AS dt,
         meal_records
     FROM {{ source('hive_life_bronze', 'asken_external') }}
     {% if is_incremental() %}
-    WHERE dt >= (SELECT MAX(dt) FROM {{ this }})
+    WHERE CAST(dt AS DATE) >= CAST((SELECT MAX(dt) FROM {{ this }}) AS DATE)
     {% endif %}
 ),
 
@@ -40,7 +40,7 @@ unnested_items AS (
 )
 
 SELECT
-    to_hex(md5(to_utf8(dt || meal_type || menu_name || CAST(item_seq AS VARCHAR)))) AS meal_pk,
+    to_hex(md5(to_utf8(CAST(dt AS VARCHAR) || meal_type || menu_name || CAST(item_seq AS VARCHAR)))) AS meal_pk,
     dt,
     meal_type,
     menu_name,

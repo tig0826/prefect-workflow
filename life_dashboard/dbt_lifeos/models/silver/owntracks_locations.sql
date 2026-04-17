@@ -19,7 +19,7 @@ WITH extracted AS (
         CAST(json_extract_scalar(raw_json, '$.vel') AS BIGINT) AS velocity,
         COALESCE(json_extract_scalar(raw_json, '$.t'), 'move') AS trigger_type,
         
-        from_unixtime(CAST(json_extract_scalar(raw_json, '$.tst') AS DOUBLE)) AT TIME ZONE 'Asia/Tokyo' AS event_time_jst_tz,
+        date_add('hour', 9, date_add('second', CAST(json_extract_scalar(raw_json, '$.tst') AS BIGINT), TIMESTAMP '1970-01-01 00:00:00')) AS event_time_jst,
         
         dt AS source_dt,
         'owntracks_external' AS source_table
@@ -35,9 +35,8 @@ WITH extracted AS (
 deduplicated AS (
     SELECT 
         *,
-        CAST(event_time_jst_tz AS TIMESTAMP) AS event_time_jst,
         ROW_NUMBER() OVER (
-            PARTITION BY event_time_jst_tz 
+            PARTITION BY event_time_jst 
             ORDER BY battery_level DESC, source_event_id
         ) AS rn
     FROM extracted
@@ -72,6 +71,6 @@ SELECT
     velocity,
     battery_level,
 
-    current_timestamp AT TIME ZONE 'Asia/Tokyo' AS transformed_at_jst
+    CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS transformed_at_jst
 FROM deduplicated
 WHERE rn = 1

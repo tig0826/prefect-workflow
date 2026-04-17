@@ -28,7 +28,7 @@ unnested AS (
         CAST(json_extract_scalar(a.activity_element, '$.logId') AS BIGINT) AS log_id,
         json_extract_scalar(a.activity_element, '$.name') AS activity_name,
         CAST(json_extract_scalar(a.activity_element, '$.startDate') || ' ' || 
-             json_extract_scalar(a.activity_element, '$.startTime') || ':00 Asia/Tokyo' AS TIMESTAMP WITH TIME ZONE) AS start_time_jst,
+             json_extract_scalar(a.activity_element, '$.startTime') || ':00' AS TIMESTAMP) AS start_time_jst,
         CAST(json_extract_scalar(a.activity_element, '$.duration') AS BIGINT) / 1000 AS duration_sec,
         CAST(json_extract_scalar(a.activity_element, '$.steps') AS INTEGER) AS steps,
         CAST(json_extract_scalar(a.activity_element, '$.calories') AS INTEGER) AS calories,

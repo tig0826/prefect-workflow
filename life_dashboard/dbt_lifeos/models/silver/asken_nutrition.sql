@@ -7,11 +7,11 @@
 
 WITH base AS (
     SELECT
-        dt,
+        CAST(dt AS DATE) AS dt,
         nutrition_summary
     FROM {{ source('hive_life_bronze', 'asken_external') }}
     {% if is_incremental() %}
-    WHERE dt >= CAST(current_date - INTERVAL '3' DAY AS VARCHAR)
+    WHERE CAST(dt AS DATE) >= current_date - INTERVAL '3' DAY
     {% endif %}
 ),
 
