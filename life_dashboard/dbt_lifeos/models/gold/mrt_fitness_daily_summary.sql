@@ -73,11 +73,11 @@ fitbit_activities AS (
 -- 3. Askenの食事データ
 asken_daily AS (
     SELECT
-        CAST(dt AS DATE) AS target_date,
+        meal_date AS target_date,
         COALESCE(calories_kcal, 0) AS calories_in
     FROM {{ ref('asken_nutrition') }}
     {% if is_incremental() %}
-    WHERE CAST(dt AS DATE) >= date_add('day', -14, current_date)
+    WHERE meal_date >= date_add('day', -14, current_date)
     {% endif %}
 ),
 

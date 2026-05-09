@@ -130,6 +130,12 @@ categorized AS (
             ELSE 'ネットサーフィン'
         END AS cat_sub
     FROM split_events
+),
+
+deduplicated AS (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY event_pk ORDER BY start_ts) AS rn
+    FROM categorized
 )
 
 SELECT
@@ -155,4 +161,5 @@ SELECT
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
     END AS priority
-FROM categorized
+FROM deduplicated
+WHERE rn = 1
