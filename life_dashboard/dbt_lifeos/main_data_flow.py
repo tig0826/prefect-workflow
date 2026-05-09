@@ -7,7 +7,9 @@ from dbt_common.events.base_types import EventLevel
 
 # パスを追加
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from enrich_places_flow import enrich_places_flow
+from common.trino_tasks import create_external, sync_table_partition
 
 DBT_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -17,6 +19,10 @@ def main_data_flow():
     """
     データマート構築の全自動統合パイプライン
     """
+
+    print("🚀 STEP 0: Syncing Android location Bronze partitions...")
+    create_external(system_name="location")
+    sync_table_partition(table_name="location_external")
 
     print("🚀 STEP 1: Building Silver & Intermediate layers...")
     # サブフローを使わず直接DbtRunnerを起動！

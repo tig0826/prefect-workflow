@@ -32,12 +32,6 @@ class TrinoAPI:
             return df
 
     def execute_action(self, query):
-        """INSERTやCREATEなど、結果(DataFrame)を返さないクエリを実行する"""
-        with contextlib.closing(self.connect()) as conn:
-            cursor = conn.cursor()
-            cursor.execute(query)
-
-    def execute_action(self, query):
         """INSERTやCREATEなど、結果を返さないクエリを実行する"""
         with contextlib.closing(self.connect()) as conn:
             cursor = conn.cursor()
@@ -99,7 +93,6 @@ class TrinoAPI:
         self.execute_action(create_table_query)
 
     def _to_trino_literal(self, v):
-        # 変更なしのため省略（お前の書いた完璧なロジックをそのまま使え）
         if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
             return "NULL"
         if isinstance(v, (pd.Timestamp, datetime.datetime)):

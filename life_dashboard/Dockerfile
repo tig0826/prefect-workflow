@@ -37,6 +37,8 @@ COPY --chown=prefectuser:prefectgroup ./fitbit_exporter/ /opt/prefect/fitbit_exp
 COPY --chown=prefectuser:prefectgroup ./aw_exporter/ /opt/prefect/aw_exporter
 COPY --chown=prefectuser:prefectgroup ./owntracks_exporter/ /opt/prefect/owntracks_exporter
 COPY --chown=prefectuser:prefectgroup ./dbt_lifeos/ /opt/prefect/dbt_lifeos
+COPY --chown=prefectuser:prefectgroup ./ai_feedback/ /opt/prefect/ai_feedback
+COPY --chown=prefectuser:prefectgroup ./location_exporter/ /opt/prefect/location_exporter
 
 # dbt のプロファイル配置
 # ENV DBT_PROFILES_DIR=/opt/dbt

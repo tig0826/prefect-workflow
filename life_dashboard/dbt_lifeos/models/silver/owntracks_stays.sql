@@ -4,7 +4,7 @@
     unique_key='stay_pk',
     table_type='iceberg',
     format='parquet',
-    partitioned_by=['day(stay_start_time)']
+    partitioned_by=['day(stay_start_time_jst)']
 ) }}
 
 WITH base AS (
@@ -26,7 +26,6 @@ state_changes AS (
         LAG(event_time_jst) OVER (PARTITION BY tracker_id ORDER BY event_time_jst) AS prev_time,
         LAG(latitude) OVER (PARTITION BY tracker_id ORDER BY event_time_jst) AS prev_lat,
         LAG(longitude) OVER (PARTITION BY tracker_id ORDER BY event_time_jst) AS prev_lon,
-        -- 🌟 アプローチBの核心: 「次のPingが飛んだ時刻」をカンニングする
         LEAD(event_time_jst) OVER (PARTITION BY tracker_id ORDER BY event_time_jst) AS next_time
     FROM base
 ),
@@ -37,8 +36,6 @@ session_flags AS (
         CASE
             WHEN prev_time IS NULL THEN 1
             
-            -- 🌟 修正点1: 時間での切断（30分）を廃止。
-            -- モニタリングモードにおいて「同じ場所での沈黙」は滞在の証拠拠。
             -- 空間的に 100m 以上動いた時のみ、セッションを切る。
             WHEN ST_Distance(
                 to_spherical_geography(ST_Point(prev_lon, prev_lat)),
@@ -63,10 +60,16 @@ session_ids AS (
 stay_sessions AS (
     SELECT
         tracker_id,
-        MIN(event_time_jst) AS stay_start_time,
+        MIN(event_time_jst) AS stay_start_time_jst,
         MAX(event_time_jst) AS raw_end_time,
-        -- 🌟 修正点2: 1ポイントしかない滞在でも、次のPing（移動開始）までを滞在とみなす
-        MAX(COALESCE(next_time, event_time_jst)) AS inferred_end_time,
+        -- 次のPingが2時間以上先なら、GPSロストや端末オフとみなし、最大2時間で強制的に滞在を切る
+        MAX(
+            CASE 
+                WHEN next_time IS NOT NULL AND date_diff('minute', event_time_jst, next_time) > 120 
+                THEN date_add('minute', 120, event_time_jst)
+                ELSE COALESCE(next_time, event_time_jst)
+            END
+        ) AS inferred_end_time,
         AVG(latitude) AS centroid_latitude,
         AVG(longitude) AS centroid_longitude,
         COUNT(*) AS point_count
@@ -76,15 +79,14 @@ stay_sessions AS (
 
 SELECT
     to_hex(md5(to_utf8(
-        tracker_id || '|' || to_iso8601(stay_start_time)
+        tracker_id || '|' || to_iso8601(stay_start_time_jst)
     ))) AS stay_pk,
 
     tracker_id,
-    stay_start_time,
+    stay_start_time_jst,
     -- 実測値ではなく、推測値（次の移動開始前まで）を終了時間とする
-    inferred_end_time AS stay_end_time,
-    -- 推測された滞在時間を計算
-    date_diff('minute', stay_start_time, inferred_end_time) AS duration_minutes,
+    inferred_end_time AS stay_end_time_jst,
+    date_diff('minute', stay_start_time_jst, inferred_end_time) AS duration_minutes,
     
     centroid_latitude,
     centroid_longitude,
@@ -92,5 +94,4 @@ SELECT
 
     current_timestamp AT TIME ZONE 'Asia/Tokyo' AS transformed_at_jst
 FROM stay_sessions
--- 🌟 修正点3: ここで初めて5分未満の「信号待ちレベルのノイズ」を弾く
-WHERE date_diff('minute', stay_start_time, inferred_end_time) >= 5
+WHERE date_diff('minute', stay_start_time_jst, inferred_end_time) >= 5

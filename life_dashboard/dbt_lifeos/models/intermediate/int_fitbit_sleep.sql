@@ -2,12 +2,14 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='event_pk',
-    table_type='iceberg'
+    table_type='iceberg',
+    format='parquet',
+    partitioned_by=['event_date_jst']
 ) }}
 
 {% set reprocess_days = var('reprocess_days', 14) %}
 
-WITH src AS (
+WITH fitbit_sleep_filtered AS (
     SELECT *
     FROM {{ ref('fitbit_sleep') }}
     {% if is_incremental() %}
@@ -32,4 +34,4 @@ SELECT
     'SLEEP' AS cat_main,
     CASE WHEN is_main_sleep THEN '主睡眠' ELSE '昼寝' END AS cat_sub,
     100 AS priority
-FROM src
+FROM fitbit_sleep_filtered

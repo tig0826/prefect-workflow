@@ -7,7 +7,6 @@
     partitioned_by=['day(afk_start_time_jst)']
 ) }}
 
--- 🌟 修正1: 境界バグを防ぐため、Int層と同じ reprocess_days (デフォルト14日) を使う！
 {% set reprocess_days = var('reprocess_days', 14) %}
 
 WITH raw_mac_personal AS (
@@ -46,7 +45,6 @@ merged AS (
 deduped AS (
     SELECT *,
            afk_start_time_jst + interval '1' second * duration_sec AS afk_end_time_jst,
-           -- 🌟 修正2: 重複判定に afk_status も含めておく
            ROW_NUMBER() OVER (
                PARTITION BY hostname, afk_start_time_jst, COALESCE(afk_status, '')
                ORDER BY duration_sec DESC, source_event_id DESC

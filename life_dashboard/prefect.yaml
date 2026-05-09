@@ -124,3 +124,14 @@ deployments:
     parameters:
       slot: "night"
     enforce_parameter_schema: false
+
+  - name: life_iceberg_compaction
+    tags: *common_tags
+    entrypoint: common/compaction_flow.py:iceberg_compaction_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 毎週日曜日 03:00 JST（パイプラインの稼働が少ない時間帯）
+      - cron: "0 3 * * 0"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true

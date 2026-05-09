@@ -2,7 +2,9 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='event_pk',
-    table_type='iceberg'
+    table_type='iceberg',
+    format='parquet',
+    partitioned_by=['event_date_jst']
 ) }}
 
 {% set reprocess_days = var('reprocess_days', 14) %}
@@ -28,8 +30,8 @@ split_events AS (
         w.aw_event_pk,
         w.hostname,
         w.usage_type,
-        w.app_name_raw,
-        w.window_title_raw,
+        w.raw_app_name,
+        w.raw_window_title,
         GREATEST(w.event_start_time_jst, COALESCE(a.afk_start_time_jst, w.event_start_time_jst)) AS start_ts,
         LEAST(w.event_end_time_jst, COALESCE(a.afk_end_time_jst, w.event_end_time_jst)) AS end_ts,
         COALESCE(a.afk_status = 'afk', false) AS is_afk
@@ -42,7 +44,6 @@ split_events AS (
 
 categorized AS (
     SELECT
-        -- 🌟 防弾チョッキ1: end_ts もハッシュに含めてIDの被りを防ぐ！
         to_hex(md5(to_utf8(
             CAST(aw_event_pk AS varchar) || '|' || 
             to_iso8601(start_ts) || '|' || 
@@ -55,86 +56,80 @@ categorized AS (
         start_ts,
         end_ts,
         is_afk,
-        app_name_raw AS raw_app_name,
-        window_title_raw AS raw_window_title,
+        raw_app_name,
+        raw_window_title,
         usage_type AS raw_usage_type,
         hostname AS raw_hostname,
 
         CASE
             WHEN usage_type = 'work' THEN 'WORK'
-            WHEN LOWER(app_name_raw) LIKE '%ghostty%' OR LOWER(app_name_raw) LIKE '%vscode%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%notion%' OR LOWER(window_title_raw) LIKE '%notion%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%gogh%' OR LOWER(window_title_raw) LIKE '%gogh%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%chatgpt%' OR LOWER(window_title_raw) LIKE '%chatgpt%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%gemini%' OR LOWER(window_title_raw) LIKE '%gemini%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%qiita%' OR LOWER(window_title_raw) LIKE '%qiita%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%kindle%' OR LOWER(window_title_raw) LIKE '%kindle%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%.mynet%' OR LOWER(window_title_raw) LIKE '%.mynet%'
-              OR LOWER(app_name_raw) LIKE '%rancher%' OR LOWER(window_title_raw) LIKE '%rancher%'
-              OR LOWER(app_name_raw) LIKE '%superset%' OR LOWER(window_title_raw) LIKE '%superset%'
-              OR LOWER(app_name_raw) LIKE '%activitywatch%' OR LOWER(window_title_raw) LIKE '%activitywatch%'
-              OR LOWER(app_name_raw) LIKE '%prefect%' OR LOWER(window_title_raw) LIKE '%prefect%'
-              OR LOWER(app_name_raw) LIKE '%minio%' OR LOWER(window_title_raw) LIKE '%minio%' THEN 'DEVELOP'
-            WHEN LOWER(app_name_raw) LIKE '%slack%' OR LOWER(app_name_raw) LIKE '%discord%' THEN 'SOCIAL'
-            WHEN LOWER(app_name_raw) LIKE '%x.com%' OR LOWER(window_title_raw) LIKE '%x.com%'
-              OR LOWER(window_title_raw) LIKE '%twitter.com%' OR LOWER(window_title_raw) LIKE '% / x %' THEN 'SOCIAL'
-            WHEN LOWER(app_name_raw) LIKE '%u-next%' OR LOWER(window_title_raw) LIKE '%u-next%' THEN 'MEDIA'
-            WHEN LOWER(app_name_raw) LIKE '%dazn%' OR LOWER(window_title_raw) LIKE '%dazn%' THEN 'MEDIA'
-            WHEN LOWER(app_name_raw) LIKE '%youtube%' OR LOWER(window_title_raw) LIKE '%youtube%' THEN 'MEDIA'
-            WHEN LOWER(app_name_raw) LIKE '%twitch%' OR LOWER(window_title_raw) LIKE '%twitch%' THEN 'MEDIA'
-            WHEN LOWER(app_name_raw) LIKE '%ニコニコ漫画%' OR LOWER(window_title_raw) LIKE '%ニコニコ漫画%'
-              OR LOWER(app_name_raw) LIKE '%コミックDAYS%' OR LOWER(window_title_raw) LIKE '%コミックDAYS%'
-              OR LOWER(app_name_raw) LIKE '%サンデーうぇぶり%' OR LOWER(window_title_raw) LIKE '%サンデーうぇぶり%'
-              OR LOWER(app_name_raw) LIKE '%マンガワン%' OR LOWER(window_title_raw) LIKE '%マンガワン%'
-              OR LOWER(app_name_raw) LIKE '%ヤンジャン%' OR LOWER(window_title_raw) LIKE '%ヤンジャン%' THEN 'MANGA'
-            WHEN LOWER(app_name_raw) LIKE '%chrome%' OR LOWER(app_name_raw) LIKE '%edge%' OR LOWER(app_name_raw) LIKE '%brave%' THEN 'BROWSING'
+            WHEN LOWER(raw_app_name) LIKE '%ghostty%' OR LOWER(raw_app_name) LIKE '%vscode%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%notion%' OR LOWER(raw_window_title) LIKE '%notion%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%gogh%' OR LOWER(raw_window_title) LIKE '%gogh%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%chatgpt%' OR LOWER(raw_window_title) LIKE '%chatgpt%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'READING'
+            WHEN LOWER(raw_app_name) LIKE '%.mynet%' OR LOWER(raw_window_title) LIKE '%.mynet%'
+              OR LOWER(raw_app_name) LIKE '%rancher%' OR LOWER(raw_window_title) LIKE '%rancher%'
+              OR LOWER(raw_app_name) LIKE '%superset%' OR LOWER(raw_window_title) LIKE '%superset%'
+              OR LOWER(raw_app_name) LIKE '%activitywatch%' OR LOWER(raw_window_title) LIKE '%activitywatch%'
+              OR LOWER(raw_app_name) LIKE '%prefect%' OR LOWER(raw_window_title) LIKE '%prefect%'
+              OR LOWER(raw_app_name) LIKE '%minio%' OR LOWER(raw_window_title) LIKE '%minio%'
+              OR LOWER(raw_app_name) LIKE '%localhost%' OR LOWER(raw_window_title) LIKE '%localhost%' THEN 'DEVELOP'
+            WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'SOCIAL'
+            WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
+              OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SOCIAL'
+            WHEN LOWER(raw_app_name) LIKE '%u-next%' OR LOWER(raw_window_title) LIKE '%u-next%' THEN 'MEDIA'
+            WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'MEDIA'
+            WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'MEDIA'
+            WHEN LOWER(raw_app_name) LIKE '%twitch%' OR LOWER(raw_window_title) LIKE '%twitch%' THEN 'MEDIA'
+            WHEN LOWER(raw_app_name) LIKE '%ニコニコ漫画%' OR LOWER(raw_window_title) LIKE '%ニコニコ漫画%'
+              OR LOWER(raw_app_name) LIKE '%コミックDAYS%' OR LOWER(raw_window_title) LIKE '%コミックDAYS%'
+              OR LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' OR LOWER(raw_window_title) LIKE '%サンデーうぇぶり%'
+              OR LOWER(raw_app_name) LIKE '%マンガワン%' OR LOWER(raw_window_title) LIKE '%マンガワン%'
+              OR LOWER(raw_app_name) LIKE '%ヤンジャン%' OR LOWER(raw_window_title) LIKE '%ヤンジャン%' THEN 'MANGA'
+            WHEN LOWER(raw_app_name) LIKE '%chrome%' OR LOWER(raw_app_name) LIKE '%edge%' OR LOWER(raw_app_name) LIKE '%brave%' THEN 'BROWSING'
             WHEN usage_type = 'gaming' THEN 'GAME'
-            WHEN LOWER(window_title_raw) LIKE '%amazon%' OR LOWER(window_title_raw) LIKE '%楽天市場%' THEN 'LIFE'
-            WHEN LOWER(app_name_raw) LIKE '%uber eats%' THEN 'LIFE'
+            WHEN LOWER(raw_window_title) LIKE '%amazon%' OR LOWER(raw_window_title) LIKE '%楽天市場%' THEN 'LIFE'
+            WHEN LOWER(raw_app_name) LIKE '%uber eats%' THEN 'LIFE'
             ELSE 'BROWSING'
         END AS cat_main,
 
         CASE
             WHEN usage_type = 'work' THEN '業務'
-            WHEN LOWER(app_name_raw) LIKE '%ghostty%' OR LOWER(app_name_raw) LIKE '%vscode%' THEN '個人開発(コーディング)'
-            WHEN LOWER(app_name_raw) LIKE '%notion%' OR LOWER(window_title_raw) LIKE '%notion%' THEN 'notion'
-            WHEN LOWER(app_name_raw) LIKE '%gogh%' OR LOWER(window_title_raw) LIKE '%gogh%' THEN 'Gogh'
-            WHEN LOWER(app_name_raw) LIKE '%chatgpt%' OR LOWER(window_title_raw) LIKE '%chatgpt%'
-              OR LOWER(app_name_raw) LIKE '%gemini%' OR LOWER(window_title_raw) LIKE '%gemini%' THEN '個人開発(AIペアプロ)'
-            WHEN LOWER(app_name_raw) LIKE '%.mynet%' OR LOWER(window_title_raw) LIKE '%.mynet%'
-              OR LOWER(app_name_raw) LIKE '%rancher%' OR LOWER(window_title_raw) LIKE '%rancher%'
-              OR LOWER(app_name_raw) LIKE '%superset%' OR LOWER(window_title_raw) LIKE '%superset%'
-              OR LOWER(app_name_raw) LIKE '%activitywatch%' OR LOWER(window_title_raw) LIKE '%activitywatch%'
-              OR LOWER(app_name_raw) LIKE '%prefect%' OR LOWER(window_title_raw) LIKE '%prefect%'
-              OR LOWER(app_name_raw) LIKE '%minio%' OR LOWER(window_title_raw) LIKE '%minio%' THEN '個人開発(自宅インフラ)'
-            WHEN LOWER(app_name_raw) LIKE '%qiita%' OR LOWER(window_title_raw) LIKE '%qiita%' THEN 'qiita'
-            WHEN LOWER(app_name_raw) LIKE '%kindle%' OR LOWER(window_title_raw) LIKE '%kindle%' THEN '読書'
-            WHEN LOWER(app_name_raw) LIKE '%slack%' OR LOWER(app_name_raw) LIKE '%discord%' THEN 'コミュニティ'
-            WHEN LOWER(app_name_raw) LIKE '%x.com%' OR LOWER(window_title_raw) LIKE '%x.com%'
-              OR LOWER(window_title_raw) LIKE '%twitter.com%' OR LOWER(window_title_raw) LIKE '% / x %' THEN 'SNS'
-            WHEN LOWER(app_name_raw) LIKE '%u-next%' OR LOWER(window_title_raw) LIKE '%u-next%' THEN 'U-NEXT'
-            WHEN LOWER(app_name_raw) LIKE '%dazn%' OR LOWER(window_title_raw) LIKE '%dazn%' THEN 'サッカー視聴'
-            WHEN LOWER(app_name_raw) LIKE '%youtube%' OR LOWER(window_title_raw) LIKE '%youtube%' THEN 'YouTube'
-            WHEN LOWER(app_name_raw) LIKE '%twitch%' OR LOWER(window_title_raw) LIKE '%twitch%' THEN 'Twitch'
-            WHEN LOWER(app_name_raw) LIKE '%ニコニコ漫画%' OR LOWER(window_title_raw) LIKE '%ニコニコ漫画%' THEN 'ニコニコ漫画'
-            WHEN LOWER(app_name_raw) LIKE '%コミックDAYS%' OR LOWER(window_title_raw) LIKE '%コミックDAYS%' THEN 'コミックDAYS'
-            WHEN LOWER(app_name_raw) LIKE '%サンデーうぇぶり%' OR LOWER(window_title_raw) LIKE '%サンデーうぇぶり%' THEN 'サンデーうぇぶり'
-            WHEN LOWER(app_name_raw) LIKE '%マンガワン%' OR LOWER(window_title_raw) LIKE '%マンガワン%' THEN 'マンガワン'
-            WHEN LOWER(app_name_raw) LIKE '%ヤンジャン%' OR LOWER(window_title_raw) LIKE '%ヤンジャン%' THEN 'ヤンジャン＋'
+            WHEN LOWER(raw_app_name) LIKE '%ghostty%' OR LOWER(raw_app_name) LIKE '%vscode%' THEN '個人開発(コーディング)'
+            WHEN LOWER(raw_app_name) LIKE '%notion%' OR LOWER(raw_window_title) LIKE '%notion%' THEN 'notion'
+            WHEN LOWER(raw_app_name) LIKE '%gogh%' OR LOWER(raw_window_title) LIKE '%gogh%' THEN 'Gogh'
+            WHEN LOWER(raw_app_name) LIKE '%chatgpt%' OR LOWER(raw_window_title) LIKE '%chatgpt%'
+              OR LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN '個人開発(AIペアプロ)'
+            WHEN LOWER(raw_app_name) LIKE '%.mynet%' OR LOWER(raw_window_title) LIKE '%.mynet%'
+              OR LOWER(raw_app_name) LIKE '%rancher%' OR LOWER(raw_window_title) LIKE '%rancher%'
+              OR LOWER(raw_app_name) LIKE '%superset%' OR LOWER(raw_window_title) LIKE '%superset%'
+              OR LOWER(raw_app_name) LIKE '%activitywatch%' OR LOWER(raw_window_title) LIKE '%activitywatch%'
+              OR LOWER(raw_app_name) LIKE '%prefect%' OR LOWER(raw_window_title) LIKE '%prefect%'
+              OR LOWER(raw_app_name) LIKE '%minio%' OR LOWER(raw_window_title) LIKE '%minio%'
+              OR LOWER(raw_app_name) LIKE '%localhost%' OR LOWER(raw_window_title) LIKE '%localhost%' THEN '個人開発(自宅インフラ)'
+            WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'qiita'
+            WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'Kindle'
+            WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'コミュニティ'
+            WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
+              OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SNS'
+            WHEN LOWER(raw_app_name) LIKE '%u-next%' OR LOWER(raw_window_title) LIKE '%u-next%' THEN 'U-NEXT'
+            WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'サッカー視聴'
+            WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'YouTube'
+            WHEN LOWER(raw_app_name) LIKE '%twitch%' OR LOWER(raw_window_title) LIKE '%twitch%' THEN 'Twitch'
+            WHEN LOWER(raw_app_name) LIKE '%ニコニコ漫画%' OR LOWER(raw_window_title) LIKE '%ニコニコ漫画%' THEN 'ニコニコ漫画'
+            WHEN LOWER(raw_app_name) LIKE '%コミックDAYS%' OR LOWER(raw_window_title) LIKE '%コミックDAYS%' THEN 'コミックDAYS'
+            WHEN LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' OR LOWER(raw_window_title) LIKE '%サンデーうぇぶり%' THEN 'サンデーうぇぶり'
+            WHEN LOWER(raw_app_name) LIKE '%マンガワン%' OR LOWER(raw_window_title) LIKE '%マンガワン%' THEN 'マンガワン'
+            WHEN LOWER(raw_app_name) LIKE '%ヤンジャン%' OR LOWER(raw_window_title) LIKE '%ヤンジャン%' THEN 'ヤンジャン＋'
             WHEN usage_type = 'gaming' THEN 'ゲーム'
-            WHEN LOWER(window_title_raw) LIKE '%amazon%' OR LOWER(window_title_raw) LIKE '%楽天市場%' THEN 'ネットショッピング'
-            WHEN LOWER(app_name_raw) LIKE '%uber eats%' THEN 'Uber Eats'
+            WHEN LOWER(raw_window_title) LIKE '%amazon%' OR LOWER(raw_window_title) LIKE '%楽天市場%' THEN 'ネットショッピング'
+            WHEN LOWER(raw_app_name) LIKE '%uber eats%' THEN 'Uber Eats'
             ELSE 'ネットサーフィン'
         END AS cat_sub
     FROM split_events
-),
-
--- 🌟 防弾チョッキ2: 最後に ROW_NUMBER() を使って、万が一同じPKが発生しても完全に弾き飛ばす！
-deduped_final AS (
-    SELECT 
-        *,
-        ROW_NUMBER() OVER (PARTITION BY event_pk ORDER BY start_ts) as rn
-    FROM categorized
 )
 
 SELECT
@@ -160,5 +155,4 @@ SELECT
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
     END AS priority
-FROM deduped_final
-WHERE rn = 1
+FROM categorized
