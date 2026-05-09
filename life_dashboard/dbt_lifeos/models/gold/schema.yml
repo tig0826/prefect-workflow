@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: mrt_behavior_slots_15m
+    columns:
+      - name: time_slot_jst
+        tests: [unique, not_null]
+
+  - name: mrt_aw_daily_work_summary
+    columns:
+      - name: target_date
+        tests: [unique, not_null]
+
+  - name: mrt_fitness_daily_summary
+    columns:
+      - name: target_date
+        tests: [unique, not_null]
+
+  - name: mrt_asken
+    columns:
+      - name: target_date
+        tests: [unique, not_null]

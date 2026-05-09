@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: int_aw_categorized
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_aw_afk
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_fitbit_activity
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_fitbit_hr_gaps
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_fitbit_sleep
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_owntracks_outing
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
