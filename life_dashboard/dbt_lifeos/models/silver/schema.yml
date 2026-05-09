@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: aw_window_events
+    columns:
+      - name: aw_event_pk
+        tests: [unique, not_null]
+
+  - name: aw_afk_events
+    columns:
+      - name: aw_event_pk
+        tests: [unique, not_null]
+
+  - name: asken_meal
+    columns:
+      - name: meal_pk
+        tests: [unique, not_null]
+
+  - name: asken_nutrition
+    columns:
+      - name: meal_date
+        tests: [unique, not_null]
+
+  - name: fitbit_activity
+    columns:
+      - name: log_id
+        tests: [unique, not_null]
+
+  - name: fitbit_heartrate
+    columns:
+      - name: heartrate_pk
+        tests: [unique, not_null]
+
+  - name: fitbit_sleep
+    columns:
+      - name: log_id
+        tests: [unique, not_null]
+
+  - name: fitbit_summary
+    columns:
+      - name: dt
+        tests: [unique, not_null]
+
+  - name: owntracks_locations
+    columns:
+      - name: owntracks_pk
+        tests: [unique, not_null]
+
+  - name: owntracks_stays
+    columns:
+      - name: stay_pk
+        tests: [unique, not_null]
