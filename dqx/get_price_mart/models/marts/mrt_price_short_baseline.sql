@@ -8,7 +8,10 @@
 with d as (
   select * from {{ ref('mrt_price_daily') }}
   {% if is_incremental() %}
-    where ts_day >= (current_date - interval '90' day)
+    where ts_day >= (
+      select date_add('day', -35, coalesce(max(ts_day), current_date))
+      from {{ this }}
+    )
   {% endif %}
 ),
 w as (

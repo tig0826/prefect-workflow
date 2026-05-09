@@ -5,7 +5,16 @@
   incremental_strategy='merge'
 ) }}
 
-with s as (
+with
+
+{% if is_incremental() %}
+_cutoff as (
+  select date_add('hour', -50, coalesce(max(ts_hour), current_timestamp)) as cutoff_ts
+  from {{ this }}
+),
+{% endif %}
+
+s as (
   -- stg直結。必要十分な列だけ選ぶ
   select
     cast(item_name as varchar)         as item_id,
@@ -15,7 +24,8 @@ with s as (
     date_trunc('hour', observed_at)    as ts_hour
   from {{ ref('stg_price_hourly') }}
   {% if is_incremental() %}
-    where observed_at >= date_add('day', -14, current_date)
+  cross join _cutoff
+  where observed_at >= _cutoff.cutoff_ts
   {% endif %}
 ),
 
@@ -40,20 +50,20 @@ trimmed as (
   select
     p.item_id,
     p.ts_hour,
-    max(p.ticks)        as ticks,
-    max(p.total_qty)    as total_qty,
-    max(p.low_raw)      as low_raw,
-    max(p.high_raw)     as high_raw,
-    max(p.p5_price)     as p5_price,
-    max(p.p95_price)    as p95_price,
-    max(p.vwap)         as vwap,
+    p.ticks,
+    p.total_qty,
+    p.low_raw,
+    p.high_raw,
+    p.p5_price,
+    p.p95_price,
+    p.vwap,
     avg(s.unit_price) filter (
       where s.unit_price between p.p5_price and p.p95_price
     )                  as trimmed_mean_5_95
   from ptiles p
   left join s
     on s.item_id = p.item_id and s.ts_hour = p.ts_hour
-  group by p.item_id, p.ts_hour
+  group by p.item_id, p.ts_hour, p.ticks, p.total_qty, p.low_raw, p.high_raw, p.p5_price, p.p95_price, p.vwap
 ),
 
 -- ローリングの“基準価格”を一意に決める（P5優先→VWAP→(low+high)/2）
