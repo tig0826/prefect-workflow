@@ -105,11 +105,6 @@ class AskenScraper:
             # ログイン成功を判定 (レスポンス内容にログアウトリンクがあるか)
             soup = BeautifulSoup(response.text, "html.parser")
             if not soup.select_one('a[href*="logout"]'):
-                # === デバッグ機能 ===
-                # debug_filename = f"asken_login_failed_{int(time.time())}.html"
-                # with open(debug_filename, "w", encoding="utf-8") as f:
-                #     f.write(response.text)
-                # ===================
                 raise PermissionError(
                     "ログインに失敗しました。認証情報が間違っているか、サイトの仕様が変更された可能性があります。"
                 )
