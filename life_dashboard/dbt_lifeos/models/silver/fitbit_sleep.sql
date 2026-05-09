@@ -2,10 +2,11 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='log_id',
-    table_type='iceberg'
+    table_type='iceberg',
+    format='parquet'
 ) }}
 
-WITH base AS (
+WITH raw_fitbit AS (
     SELECT
         dt,
         json_extract_scalar(raw_json, '$.raw_json') AS real_json
@@ -19,7 +20,7 @@ extracted AS (
     SELECT
         dt,
         CAST(json_extract(real_json, '$.sleep.sleep') AS ARRAY(JSON)) AS sleep_array
-    FROM base
+    FROM raw_fitbit
 ),
 
 unnested AS (
@@ -27,7 +28,6 @@ unnested AS (
         dt,
         CAST(json_extract_scalar(s.sleep_element, '$.logId') AS BIGINT) AS log_id,
         CAST(json_extract_scalar(s.sleep_element, '$.isMainSleep') AS BOOLEAN) AS is_main_sleep,
-        -- 🌟 修正: ' Asia/Tokyo' を削除し、ただの TIMESTAMP としてパースする！
         CAST(REPLACE(json_extract_scalar(s.sleep_element, '$.startTime'), 'T', ' ') AS TIMESTAMP) AS start_time_jst,
         CAST(REPLACE(json_extract_scalar(s.sleep_element, '$.endTime'), 'T', ' ') AS TIMESTAMP) AS end_time_jst,
         CAST(json_extract_scalar(s.sleep_element, '$.duration') AS BIGINT) / 1000 AS duration_sec,

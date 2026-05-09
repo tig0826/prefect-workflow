@@ -1,13 +1,14 @@
 {{ config(
     materialized='incremental',
     incremental_strategy='merge',
-    unique_key='dt',
-    table_type='iceberg'
+    unique_key='meal_date',
+    table_type='iceberg',
+    format='parquet'
 ) }}
 
-WITH base AS (
+WITH raw_asken AS (
     SELECT
-        CAST(dt AS DATE) AS dt,
+        CAST(dt AS DATE) AS meal_date,
         nutrition_summary
     FROM {{ source('hive_life_bronze', 'asken_external') }}
     {% if is_incremental() %}
@@ -17,7 +18,7 @@ WITH base AS (
 
 extracted AS (
     SELECT
-        dt,
+        meal_date,
         CAST(element_at(nutrition_summary, 'エネルギー').value AS DOUBLE) AS calories_kcal,
         CAST(element_at(nutrition_summary, 'タンパク質').value AS DOUBLE) AS protein_g,
         CAST(element_at(nutrition_summary, '脂質').value AS DOUBLE) AS fat_g,
@@ -36,7 +37,7 @@ extracted AS (
         CAST(element_at(nutrition_summary, 'ビタミンB2').value AS DOUBLE) AS vitamin_b2_mg,
         CAST(element_at(nutrition_summary, 'ビタミンB6').value AS DOUBLE) AS vitamin_b6_mg,
         CAST(element_at(nutrition_summary, 'ビタミンC').value AS DOUBLE) AS vitamin_c_mg
-    FROM base
+    FROM raw_asken
 )
 
 SELECT * FROM extracted

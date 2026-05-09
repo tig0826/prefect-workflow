@@ -2,7 +2,9 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='event_pk',
-    table_type='iceberg'
+    table_type='iceberg',
+    format='parquet',
+    partitioned_by=['event_date_jst']
 ) }}
 
 {% set reprocess_days = var('reprocess_days', 14) %}

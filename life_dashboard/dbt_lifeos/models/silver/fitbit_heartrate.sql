@@ -2,7 +2,8 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='heartrate_pk',
-    table_type='iceberg'
+    table_type='iceberg',
+    partitioned_by=['day(timestamp_jst)']
 ) }}
 
 WITH base AS (

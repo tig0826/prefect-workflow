@@ -2,20 +2,22 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='target_date',
-    table_type='iceberg'
+    table_type='iceberg',
+    format='parquet',
+    partitioned_by=['target_date']
 ) }}
 
 WITH base AS (
     SELECT
         CAST(event_date_jst AS DATE) AS target_date,
         cat_main, raw_app_name, is_afk,
-        CAST(start_ts AS TIMESTAMP(3)) AS st,
-        CAST(end_ts AS TIMESTAMP(3)) AS et,
+        CAST(start_ts AS TIMESTAMP(3)) AS start_ts,
+        CAST(end_ts AS TIMESTAMP(3)) AS end_ts,
         date_diff('second', CAST(start_ts AS TIMESTAMP(3)), CAST(end_ts AS TIMESTAMP(3))) AS duration_sec
     FROM {{ ref('int_all_behavior_events') }}
     WHERE source_system = 'activitywatch'
     {% if is_incremental() %}
-    AND CAST(event_date_jst AS DATE) >= date_add('day', -7, CAST((SELECT MAX(target_date) FROM {{ this }}) AS DATE))
+    AND CAST(event_date_jst AS DATE) >= date_add('day', -7, current_date)
     {% endif %}
 ),
 core_events AS (
@@ -25,26 +27,26 @@ core_events AS (
       AND duration_sec > 5
 ),
 lagged AS (
-    SELECT *, LAG(et) OVER(PARTITION BY target_date, cat_main ORDER BY st) as prev_et
+    SELECT *, LAG(end_ts) OVER(PARTITION BY target_date, cat_main ORDER BY start_ts) AS prev_end_ts
     FROM core_events
 ),
 session_flags AS (
     SELECT *,
         CASE
-            WHEN prev_et IS NULL THEN 1
-            WHEN date_diff('second', prev_et, st) > 3000 THEN 1
+            WHEN prev_end_ts IS NULL THEN 1
+            WHEN date_diff('second', prev_end_ts, start_ts) > 3000 THEN 1
             ELSE 0
         END AS is_new_session
     FROM lagged
 ),
 session_assigned AS (
-    SELECT *, SUM(is_new_session) OVER(PARTITION BY target_date, cat_main ORDER BY st) AS session_id
+    SELECT *, SUM(is_new_session) OVER(PARTITION BY target_date, cat_main ORDER BY start_ts) AS session_id
     FROM session_flags
 ),
 session_boundaries AS (
     SELECT target_date, cat_main, session_id,
-        MIN(st) AS session_start, MAX(et) AS session_end,
-        date_diff('second', MIN(st), MAX(et)) AS session_duration_sec
+        MIN(start_ts) AS session_start, MAX(end_ts) AS session_end,
+        date_diff('second', MIN(start_ts), MAX(end_ts)) AS session_duration_sec
     FROM session_assigned
     GROUP BY target_date, cat_main, session_id
 ),

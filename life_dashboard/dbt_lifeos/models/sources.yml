@@ -15,3 +15,4 @@ sources:
       - name: asken_external
       - name: fitbit_external
       - name: owntracks_external
+      - name: location_external
