@@ -116,7 +116,7 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
               OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SNS'
             WHEN LOWER(raw_app_name) LIKE '%u-next%' OR LOWER(raw_window_title) LIKE '%u-next%' THEN 'U-NEXT'
-            WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'サッカー視聴'
+            WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'スポーツ観戦'
             WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'YouTube'
             WHEN LOWER(raw_app_name) LIKE '%twitch%' OR LOWER(raw_window_title) LIKE '%twitch%' THEN 'Twitch'
             WHEN LOWER(raw_app_name) LIKE '%ニコニコ漫画%' OR LOWER(raw_window_title) LIKE '%ニコニコ漫画%' THEN 'ニコニコ漫画'
@@ -132,6 +132,8 @@ categorized AS (
     FROM split_events
 ),
 
+-- split_eventsのLEFT JOINで1つのwindow_eventが複数afk_eventと結合し
+-- 同一event_pkが重複する場合にMERGE_TARGET_ROW_MULTIPLE_MATCHESを防ぐ
 deduplicated AS (
     SELECT *,
         ROW_NUMBER() OVER (PARTITION BY event_pk ORDER BY start_ts) AS rn
