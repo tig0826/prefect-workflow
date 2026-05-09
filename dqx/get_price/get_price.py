@@ -183,7 +183,7 @@ def get_price_hourly(skip_insert: bool = False):
     # Prefect API のエンドポイント
     # PREFECT_API_URL = "http://prefect.mynet/api"
     PREFECT_API_URL = "http://prefect-server.prefect.svc.cluster.local:4200/api"
-    PREFECT_DEPLOYMENT_ID_GET_PRICE_MART = "579ae2df-61a4-4dee-ab77-270e51323038"
+    PREFECT_DEPLOYMENT_ID_GET_PRICE_MART = "60cbdaba-a717-4383-8f27-cf3531068604"
     response = requests.post(
         f"{PREFECT_API_URL}/deployments/{PREFECT_DEPLOYMENT_ID_GET_PRICE_MART}/create_flow_run",
         json={},
