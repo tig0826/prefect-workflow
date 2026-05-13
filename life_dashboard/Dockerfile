@@ -22,6 +22,7 @@ WORKDIR /opt/prefect
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     fonts-noto-cjk \
+    android-tools-adb \
   && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -g 1000 prefectgroup && \
@@ -38,6 +39,7 @@ COPY --chown=prefectuser:prefectgroup ./aw_exporter/ /opt/prefect/aw_exporter
 COPY --chown=prefectuser:prefectgroup ./owntracks_exporter/ /opt/prefect/owntracks_exporter
 COPY --chown=prefectuser:prefectgroup ./dbt_lifeos/ /opt/prefect/dbt_lifeos
 COPY --chown=prefectuser:prefectgroup ./ai_feedback/ /opt/prefect/ai_feedback
+COPY --chown=prefectuser:prefectgroup ./timeline_exporter/ /opt/prefect/timeline_exporter
 # dbt のプロファイル配置
 # ENV DBT_PROFILES_DIR=/opt/dbt
 # RUN mkdir -p /opt/dbt

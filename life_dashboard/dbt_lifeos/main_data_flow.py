@@ -28,7 +28,7 @@ def main_data_flow():
             profiles_dir=DBT_PROJECT_DIR,
             log_level=EventLevel.INFO,
         )
-    ).invoke(["build", "--select", "models/gold"])
+    ).invoke(["build", "--select", "models/gold", "--vars", "reprocess_days: 7"])
 
 
 if __name__ == "__main__":
