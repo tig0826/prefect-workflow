@@ -50,3 +50,8 @@ models:
     columns:
       - name: stay_pk
         tests: [unique, not_null]
+
+  - name: timeline_segments
+    columns:
+      - name: segment_pk
+        tests: [unique, not_null]

@@ -85,6 +85,7 @@ deployments:
     tags: *common_tags
     entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow
     work_pool: *common_work_pool
+    concurrency_limit: 1
     schedules:
       # 15分ごと・エクスポートの5分後（:00/:15/:30/:45 export → :05/:20/:35/:50 dbt）
       - cron: "5,20,35,50 * * * *"
@@ -124,6 +125,16 @@ deployments:
     parameters:
       slot: "night"
     enforce_parameter_schema: false
+
+  - name: life_timeline_sync
+    tags: *common_tags
+    entrypoint: timeline_exporter/timeline_flow.py:timeline_sync_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "0 */6 * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
 
   - name: life_iceberg_compaction
     tags: *common_tags

@@ -30,3 +30,8 @@ models:
     columns:
       - name: event_pk
         tests: [unique, not_null]
+
+  - name: int_timeline_outing
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]

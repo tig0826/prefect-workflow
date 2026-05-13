@@ -15,3 +15,10 @@ sources:
       - name: asken_external
       - name: fitbit_external
       - name: owntracks_external
+      - name: timeline_external
+
+  - name: iceberg_life_gold
+    database: iceberg
+    schema: life_gold
+    tables:
+      - name: location_place_cache
