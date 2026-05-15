@@ -7,11 +7,14 @@ from dbt_common.events.base_types import EventLevel
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from common.trino_tasks import sync_table_partition
+
 DBT_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 @flow(name="LifeOS Integrated Data Pipeline")
 def main_data_flow():
+    sync_table_partition(table_name="timeline_external")
     print("STEP 1: Building Silver & Intermediate layers...")
     PrefectDbtRunner(
         settings=PrefectDbtSettings(

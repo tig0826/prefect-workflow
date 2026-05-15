@@ -136,16 +136,6 @@ deployments:
     parameters: {}
     enforce_parameter_schema: true
 
-  - name: life_timeline_partition_sync
-    tags: *common_tags
-    entrypoint: timeline_exporter/timeline_partition_flow.py:timeline_partition_sync_flow
-    work_pool: *common_work_pool
-    schedules:
-      # 6時間ごと（Androidがエクスポートした後にHiveパーティションを同期）
-      - cron: "30 */6 * * *"
-        timezone: "Asia/Tokyo"
-    parameters: {}
-    enforce_parameter_schema: true
 
   - name: life_iceberg_compaction
     tags: *common_tags
