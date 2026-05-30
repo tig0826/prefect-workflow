@@ -15,7 +15,7 @@ WITH raw_mac_personal AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS event_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'app') AS raw_app_name, element_at(data, 'title') AS raw_window_title, CAST(NULL AS VARCHAR) AS activity_class_raw
     FROM {{ source('hive_life_bronze', 'aw_window_tignomacbook_pro_external') }}
-    WHERE "timestamp" IS NOT NULL
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 raw_mac_work AS (
@@ -24,7 +24,7 @@ raw_mac_work AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS event_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'app') AS raw_app_name, element_at(data, 'title') AS raw_window_title, CAST(NULL AS VARCHAR) AS activity_class_raw
     FROM {{ source('hive_life_bronze', 'aw_window_a1002995_external') }}
-    WHERE "timestamp" IS NOT NULL
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 raw_windows_gaming AS (
@@ -33,7 +33,7 @@ raw_windows_gaming AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS event_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'app') AS raw_app_name, element_at(data, 'title') AS raw_window_title, CAST(NULL AS VARCHAR) AS activity_class_raw
     FROM {{ source('hive_life_bronze', 'aw_window_desktop_o8tfag0_external') }}
-    WHERE "timestamp" IS NOT NULL
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 raw_android AS (
@@ -42,7 +42,7 @@ raw_android AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS event_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'app') AS raw_app_name, CAST(NULL AS VARCHAR) AS raw_window_title, element_at(data, 'classname') AS activity_class_raw
     FROM {{ source('hive_life_bronze', 'aw_android_test_external') }}
-    WHERE "timestamp" IS NOT NULL
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 merged_raw AS (
