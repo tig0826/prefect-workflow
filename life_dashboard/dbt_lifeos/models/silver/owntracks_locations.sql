@@ -40,7 +40,9 @@ deduplicated AS (
             ORDER BY battery_level DESC, source_event_id
         ) AS rn
     FROM extracted
-    WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+    WHERE latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND event_time_jst IS NOT NULL
 )
 
 SELECT
