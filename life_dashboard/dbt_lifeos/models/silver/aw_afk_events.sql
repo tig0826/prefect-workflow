@@ -15,7 +15,7 @@ WITH raw_mac_personal AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS afk_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'status') AS afk_status
     FROM {{ source('hive_life_bronze', 'aw_afk_tignomacbook_pro_external') }}
-    WHERE "timestamp" IS NOT NULL 
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 raw_mac_work AS (
@@ -24,7 +24,7 @@ raw_mac_work AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS afk_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'status') AS afk_status
     FROM {{ source('hive_life_bronze', 'aw_afk_a1002995_external') }}
-    WHERE "timestamp" IS NOT NULL 
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 raw_windows_gaming AS (
@@ -33,7 +33,7 @@ raw_windows_gaming AS (
            CAST(from_iso8601_timestamp(CAST("timestamp" AS VARCHAR)) AT TIME ZONE 'Asia/Tokyo' AS TIMESTAMP) AS afk_start_time_jst,
            CAST(duration AS DOUBLE) AS duration_sec, element_at(data, 'status') AS afk_status
     FROM {{ source('hive_life_bronze', 'aw_afk_desktop_o8tfag0_external') }}
-    WHERE "timestamp" IS NOT NULL 
+    WHERE "timestamp" IS NOT NULL AND id IS NOT NULL
       {% if is_incremental() %} AND dt >= date_format(date_add('day', -{{ reprocess_days }}, current_date), '%Y-%m-%d') {% endif %}
 ),
 merged AS (
