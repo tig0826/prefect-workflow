@@ -115,21 +115,34 @@ def fetch_context(target_date: str) -> dict:
         ORDER BY f.target_date
     """)
 
-    # ─── 3. 時間帯別アクティビティ（今日） ─────────────────────────
+    # ─── 3. 時間別アクティビティ（今日・1時間粒度） ─────────────────
     tod_df = TRINO.execute_query(f"""
         SELECT
-            CASE
-                WHEN hour(time_slot_jst) < 12 THEN 'morning'
-                WHEN hour(time_slot_jst) < 18 THEN 'afternoon'
-                ELSE 'evening'
-            END AS time_of_day,
+            hour(time_slot_jst) AS hour_jst,
             cat_main,
-            ROUND(SUM(overlap_sec) / 3600.0, 2) AS hours
+            ROUND(SUM(overlap_sec) / 60.0) AS total_minutes
         FROM iceberg.life_gold.mrt_behavior_slots_15m
         WHERE slot_date_jst = DATE '{target_date}'
           AND cat_main NOT IN ('UNOBSERVED', 'UNKNOWN')
         GROUP BY 1, 2
         ORDER BY 1, 3 DESC
+    """)
+
+    # ─── 4. 直近のチャット履歴（ユーザー発言のみ）──────────────────────
+    chat_df = TRINO.execute_query("""
+        SELECT messages_json, CAST(updated_at AS VARCHAR) AS updated_at
+        FROM iceberg.life_gold.chat_history
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """)
+
+    # ─── 5. 直近5日分のAI FB（重複防止用）──────────────────────────────
+    recent_fb_df = TRINO.execute_query(f"""
+        SELECT CAST(feedback_date AS VARCHAR), slot, messages
+        FROM iceberg.life_gold.ai_feedback
+        WHERE feedback_date BETWEEN DATE '{target_date}' - INTERVAL '5' DAY
+                                AND DATE '{target_date}' - INTERVAL '1' DAY
+        ORDER BY feedback_date DESC, slot
     """)
 
     ctx: dict = {"date": target_date}
@@ -183,12 +196,82 @@ def fetch_context(target_date: str) -> dict:
             "snack": f"{r.snack_items} ({int(r.snack_calories)}kcal)" if r.snack_items else None,
         }
 
-    # ─── 時間帯別アクティビティ ────────────────────────────────────
+    # ─── 時間別アクティビティ + 行動シグナル ─────────────────────────
     if not tod_df.empty:
-        tod: dict = {"morning": {}, "afternoon": {}, "evening": {}}
+        # 時間→カテゴリ→分数 のマップを構築
+        by_hour: dict[int, dict[str, int]] = {}
         for _, row in tod_df.iterrows():
-            tod[row.time_of_day][row.cat_main] = float(row.hours)
-        ctx["today"]["activity_by_time"] = tod
+            h = int(row.hour_jst)
+            cat = str(row.cat_main)
+            mins = int(row.total_minutes)
+            if h not in by_hour:
+                by_hour[h] = {}
+            by_hour[h][cat] = mins
+
+        ctx["today"]["activity_by_hour"] = {
+            str(h): cats for h, cats in sorted(by_hour.items())
+        }
+
+        # ── 行動シグナルを Python で計算 ──────────────────────────────
+        signals: dict = {}
+
+        # 起床時刻の推定: 5〜12時の中でSLEEPが30分未満の最初の時間帯
+        wake_hours = [
+            h for h in range(5, 13)
+            if h in by_hour and by_hour[h].get("SLEEP", 60) < 30
+        ]
+        if wake_hours:
+            signals["estimated_wake_hour"] = min(wake_hours)
+
+        # 就寝時刻の推定: 20〜04時の中でSLEEPが30分以上の最初の時間帯
+        for h in list(range(20, 24)) + list(range(0, 5)):
+            if by_hour.get(h, {}).get("SLEEP", 0) >= 30:
+                signals["estimated_bedtime_hour"] = h
+                break
+
+        # 夕方の昼寝検出: 12〜20時のSLEEP合計
+        nap_mins = sum(by_hour.get(h, {}).get("SLEEP", 0) for h in range(12, 21))
+        if nap_mins >= 20:
+            signals["afternoon_nap_minutes"] = nap_mins
+            signals["nap_note"] = (
+                f"12〜20時にSLEEPが{nap_mins}分検出。"
+                "夕方の仮眠はメラトニン分泌を乱し、夜の入眠を遅らせるリスクあり。"
+                "Fitbitの総睡眠時間にこの仮眠が含まれている可能性がある。"
+            )
+
+        # 深夜スクリーンタイム（22時以降のGAME/MEDIA/BROWSING）
+        screen_cats = {"GAME", "MEDIA", "MANGA", "BROWSING"}
+        late_screen: dict[str, int] = {}
+        for h in range(22, 24):
+            for cat in screen_cats:
+                m = by_hour.get(h, {}).get(cat, 0)
+                if m > 0:
+                    late_screen[cat] = late_screen.get(cat, 0) + m
+        if late_screen:
+            total_late = sum(late_screen.values())
+            signals["late_night_screen"] = {
+                "total_minutes": total_late,
+                "breakdown": late_screen,
+                "note": (
+                    f"22時以降に画面系が{total_late}分（{late_screen}）。"
+                    "ブルーライト・認知覚醒によりメラトニン抑制→入眠遅延・睡眠浅化のリスク。"
+                ),
+            }
+
+        # 深夜活動（0〜03時）: ゲーム・開発・メディアなど
+        very_late: dict[str, int] = {}
+        for h in range(0, 4):
+            for cat, m in by_hour.get(h, {}).items():
+                if cat != "SLEEP" and m > 0:
+                    very_late[cat] = very_late.get(cat, 0) + m
+        if very_late:
+            signals["past_midnight_activity"] = {
+                "breakdown": very_late,
+                "note": "0〜3時台に活動あり。概日リズムの深夜相への後退は慢性的な睡眠負債を招きやすい。",
+            }
+
+        if signals:
+            ctx["today"]["sleep_behavior_signals"] = signals
 
     # ─── 14日間トレンド ───────────────────────────────────────────
     if not trend_df.empty:
@@ -207,30 +290,10 @@ def fetch_context(target_date: str) -> dict:
         ctx["trends_14d"] = trend_list
 
         # ─── Python 計算インサイト ──────────────────────────────────
-        valid = [d for d in trend_list if d["sleep_hours"] and d["sleep_hours"] > 1]
-        sleep_vals = [d["sleep_hours"] for d in valid]
-        work_vals = [d["work_score"] for d in valid]
-
         insights: dict = {}
+        today_work = ctx.get("today", {}).get("work", {})
 
-        # 7日平均との比較
-        recent7 = [d for d in trend_list[-7:] if d["sleep_hours"] and d["sleep_hours"] > 1]
-        if recent7 and ctx.get("today", {}).get("sleep_hours"):
-            avg7_sleep = sum(d["sleep_hours"] for d in recent7) / len(recent7)
-            insights["sleep_vs_7d_avg"] = {
-                "avg_7d": round(avg7_sleep, 1),
-                "change": _pct_change(ctx["today"]["sleep_hours"], avg7_sleep),
-            }
-
-        recent7_steps = [d["steps"] for d in trend_list[-7:] if d["steps"]]
-        if recent7_steps and ctx.get("today", {}).get("steps"):
-            avg7_steps = sum(recent7_steps) / len(recent7_steps)
-            insights["steps_vs_7d_avg"] = {
-                "avg_7d": int(avg7_steps),
-                "change": _pct_change(ctx["today"]["steps"], avg7_steps),
-            }
-
-        # 連続睡眠不足日数（7時間未満）
+        # ── 連続睡眠不足日数（7時間未満）──
         streak = 0
         for d in reversed(trend_list):
             if d["sleep_hours"] and d["sleep_hours"] < 7:
@@ -240,18 +303,123 @@ def fetch_context(target_date: str) -> dict:
         if streak > 0:
             insights["consecutive_sleep_deficit_days"] = streak
 
-        # 睡眠 → 翌日ワークスコアの相関（当日sleep vs 翌日work）
+        # ── 直近3日の睡眠トレンド（増減方向）──
+        recent3_sleep = [d["sleep_hours"] for d in trend_list[-3:] if d["sleep_hours"] and d["sleep_hours"] > 1]
+        if len(recent3_sleep) == 3:
+            if recent3_sleep[0] > recent3_sleep[1] > recent3_sleep[2]:
+                insights["sleep_trend_3d"] = "declining"
+            elif recent3_sleep[0] < recent3_sleep[1] < recent3_sleep[2]:
+                insights["sleep_trend_3d"] = "improving"
+
+        # ── 安静時心拍数の3日トレンド（上昇は疲労蓄積のサイン）──
+        recent3_hr = [d["resting_hr"] for d in trend_list[-3:] if d["resting_hr"]]
+        if len(recent3_hr) == 3 and all(recent3_hr):
+            if recent3_hr[2] - recent3_hr[0] >= 5:
+                insights["resting_hr_rising_3d"] = {
+                    "from": recent3_hr[0],
+                    "to": recent3_hr[2],
+                    "note": "安静時心拍数が3日間で5bpm以上上昇 — 疲労蓄積・体調悪化の早期サイン",
+                }
+
+        # ── 睡眠 → 翌日ワークスコアの相関 ──
         sleep_seq = [d["sleep_hours"] for d in trend_list[:-1]]
         work_next = [trend_list[i + 1]["work_score"] for i in range(len(trend_list) - 1)]
-        corr = _correlation(sleep_seq, work_next)
-        if corr is not None:
-            insights["sleep_to_next_day_work_correlation"] = corr
-            if abs(corr) >= 0.4:
-                direction = "正の相関（睡眠が長いほど翌日の集中スコアが高い）" if corr > 0 else "負の相関"
-                insights["sleep_work_correlation_note"] = direction
+        corr_sw = _correlation(sleep_seq, work_next)
+        if corr_sw is not None:
+            insights["sleep_to_next_day_work_corr"] = corr_sw
+            if abs(corr_sw) >= 0.4:
+                note = "睡眠が長いほど翌日の集中スコアが高い傾向" if corr_sw > 0 else "睡眠が長いほど翌日の集中スコアが低い傾向（夜型の可能性）"
+                insights["sleep_work_corr_note"] = note
+
+        # ── 歩数 → 睡眠品質の相関 ──
+        steps_seq = [d["steps"] for d in trend_list[:-1]]
+        sleep_next = [trend_list[i + 1]["sleep_hours"] for i in range(len(trend_list) - 1)]
+        corr_ps = _correlation(steps_seq, sleep_next)
+        if corr_ps is not None and abs(corr_ps) >= 0.4:
+            note = "歩数が多い日は翌日の睡眠が長くなる傾向" if corr_ps > 0 else "歩数が多い日は翌日の睡眠が短くなる傾向"
+            insights["steps_to_next_sleep_corr"] = {"value": corr_ps, "note": note}
+
+        # ── ワークスコアの高日と低日の睡眠比較 ──
+        high_work_days = [d for d in trend_list if d["work_score"] is not None and d["sleep_hours"] and d["work_score"] >= 60]
+        low_work_days = [d for d in trend_list if d["work_score"] is not None and d["sleep_hours"] and d["work_score"] < 30]
+        if len(high_work_days) >= 2 and len(low_work_days) >= 2:
+            avg_sleep_high = sum(d["sleep_hours"] for d in high_work_days) / len(high_work_days)
+            avg_sleep_low = sum(d["sleep_hours"] for d in low_work_days) / len(low_work_days)
+            insights["sleep_diff_by_work_performance"] = {
+                "avg_sleep_when_high_work": round(avg_sleep_high, 1),
+                "avg_sleep_when_low_work": round(avg_sleep_low, 1),
+                "note": f"集中スコア60超の日は平均{avg_sleep_high:.1f}h睡眠、30未満の日は{avg_sleep_low:.1f}h",
+            }
+
+        # ── 7日平均ワークスコアと今日の比較 ──
+        recent7_work = [d["work_score"] for d in trend_list[-7:] if d["work_score"] is not None]
+        if recent7_work and today_work.get("work_score") is not None:
+            avg7_work = sum(recent7_work) / len(recent7_work)
+            insights["work_score_vs_7d_avg"] = {
+                "avg_7d": round(avg7_work, 1),
+                "today": today_work["work_score"],
+                "change": _pct_change(today_work["work_score"], avg7_work),
+            }
+
+        # ── 前半7日 vs 後半7日のワークスコア比較 ──
+        prev7_work = [d["work_score"] for d in trend_list[:7] if d["work_score"] is not None]
+        curr7_work = [d["work_score"] for d in trend_list[7:] if d["work_score"] is not None]
+        if prev7_work and curr7_work:
+            avg_prev = sum(prev7_work) / len(prev7_work)
+            avg_curr = sum(curr7_work) / len(curr7_work)
+            insights["work_score_week_over_week"] = {
+                "prev7d_avg": round(avg_prev, 1),
+                "curr7d_avg": round(avg_curr, 1),
+                "change": _pct_change(avg_curr, avg_prev),
+            }
 
         if insights:
             ctx["computed_insights"] = insights
+
+    # ─── 直近5日分のAI FBを整形（重複防止用）────────────────────────
+    if not recent_fb_df.empty:
+        past_fb_entries = []
+        for _, row in recent_fb_df.iterrows():
+            try:
+                msgs = json.loads(str(row.messages))
+                texts = [m.get("message", "") for m in msgs if isinstance(m, dict)]
+                past_fb_entries.append({
+                    "date": str(row[0])[:10],
+                    "slot": str(row.slot),
+                    "messages": texts,
+                })
+            except Exception:
+                continue
+        if past_fb_entries:
+            ctx["recent_feedback_history"] = past_fb_entries
+
+    # ─── 直近チャット：ユーザー発言のみ抽出 ──────────────────────────
+    if not chat_df.empty:
+        try:
+            row = chat_df.iloc[0]
+            all_messages = json.loads(str(row.messages_json))
+            # ユーザー発言のみ・直近15件のテキストを抽出
+            user_texts = []
+            for m in all_messages:
+                if m.get("role") != "user":
+                    continue
+                parts = m.get("parts", [])
+                text = " ".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
+                if text:
+                    user_texts.append(text)
+            if user_texts:
+                ctx["recent_user_statements"] = {
+                    "note": (
+                        "これはユーザーとのチャット履歴から抽出したユーザー発言（直近15件）。"
+                        "個別メッセージの日時は不明だが、おおむね直近数日〜数週間の発言。"
+                        "ユーザーの主観的な状態・悩み・出来事を把握するための補助情報として使うこと。"
+                        "データと矛盾する場合はデータを優先。過去の発言内容を今日の状態に安易に投影しないこと。"
+                    ),
+                    "history_updated_at": str(row.updated_at)[:10],
+                    "statements": user_texts[-15:],
+                }
+        except Exception as e:
+            print(f"[chat_history] parse error: {e}")
 
     return ctx
 
@@ -293,7 +461,8 @@ def generate_feedback(ctx: dict, slot: str, api_key: str) -> list[dict]:
     }[slot]
 
     prompt = f"""
-あなたはライフログ分析AIです。以下のデータを見て、**本当に生活改善につながる**ことだけをフィードバックしてください。
+あなたは医学・健康科学・行動心理学の知識を持つパーソナルライフアナリストです。
+ユーザーの日々のライフログを深く読み解き、表面的な数値ではなく「いつ・何が・なぜ起きているか」を把握した上で、本当に価値のあるインサイトだけを届けます。
 
 ## 分析タイミング
 {slot_context["label"]} — {slot_context["focus"]}
@@ -307,24 +476,96 @@ def generate_feedback(ctx: dict, slot: str, api_key: str) -> list[dict]:
 ## データ（JSON）
 {json.dumps(ctx, ensure_ascii=False, indent=2)}
 
-## 出力ルール（厳守）
-- **件数**: 最大3件。重要なものがなければ1〜2件で良い。
-- **1件 = 1文**（60文字以内）
-- **末尾に必ずアクション**を入れる（「〜してください」「〜を試してください」）
-- **数値比較は書かない**（「昨日比-8%」「平均より低い」などは禁止）
-- **存在しないデータへの言及禁止**（「〇〇のデータがありません」はNG）
-- **sleep_hoursがnull/0の場合**：夜間活動（DEVELOP/MEDIA/GAMEなど）が1h以上あれば徹夜コメントOK、なければ睡眠コメント禁止（未同期）
-- **省略基準**: 軽微な変化・一般論・誰でも言えること → 書かない
+---
 
-## 取り上げる価値がある例
-- 睡眠が明らかに足りていない（6h未満）→ 具体的な回復策
-- 運動が数日ゼロ → 今すぐできる軽い運動を提案
-- 特定の時間帯に集中が極端に落ちている → その時間帯の対策
-- 食事のカロリーや栄養が著しく偏っている → 具体的な食品提案
+## 新鮮さの原則（最重要）
+
+`recent_feedback_history` に直近5日間の過去FBが含まれている。**これらで伝えた内容は繰り返さない。**
+
+- **相関・傾向の洞察（「あなたのデータでは○○の傾向がある」）**: 14日間データから算出されるため毎日同じ結論になりやすい。今日のデータがその傾向の具体的な新例（例: 昨日まさに睡眠が短くて今日のスコアが下がった）であれば言及してよいが、「傾向がある」という抽象的な説明だけなら繰り返さない。
+- **危険サイン（danger）**: 状況が継続している間は毎日言及してよい。ただし言い回しや角度を変える。
+- **今日固有の変化・出来事を優先**: 昨日と何が違うか、今日だけに見える特徴は何かを中心に組み立てる。
+
+「昨日も同じことを言ったが今日も同じ」ならその洞察は今日は不要。
+
+## タイムラインデータの読み方（必ず活用すること）
+
+`activity_by_hour` は 0〜23時の時間帯別カテゴリ分布（分単位）。`sleep_behavior_signals` はそこから計算済みの行動シグナル。
+
+**これらを使って以下を判断する（数値だけでなくタイミングを見ること）：**
+
+- **睡眠の質の文脈化**: 総睡眠時間が長くても、`afternoon_nap_minutes` があれば夕方の仮眠が含まれている可能性。夜間の本睡眠時間は実質的に短い場合がある。
+- **就寝・起床のリズム**: `estimated_bedtime_hour` と `estimated_wake_hour` から概日リズムの乱れを判断。23時就寝と02時就寝では同じ7時間睡眠でも睡眠の質と翌日パフォーマンスに大きな差がある（概日リズムの位相）。
+- **就寝前スクリーン暴露**: `late_night_screen` が存在する場合、ブルーライトと認知覚醒によるメラトニン抑制を考慮。ゲームは特に交感神経を活性化する。
+- **深夜活動**: `past_midnight_activity` がある場合、概日リズムへの影響と翌日の慢性的な眠気・集中力低下を言及する根拠になる。
+
+## 科学的分析フレームワーク（必要に応じて活用する）
+
+- **睡眠科学**: 深睡眠は前半の睡眠サイクルに集中。就寝が遅いほど深睡眠が削られる。7〜9時間が推奨だが「いつ寝るか」も重要。
+- **安静時心拍数**: 3日連続上昇 → 副交感神経活性の低下・疲労蓄積の客観指標。5bpm以上の急上昇はオーバートレーニングや体調悪化の早期サイン。
+- **集中力と睡眠の関係**: 前日の睡眠不足（特に深睡眠の不足）は作業記憶・実行機能を低下させ、翌日の集中スコアに直結。
+- **運動と睡眠**: 適度な有酸素運動（歩数増加など）は深睡眠を増加させる。ただし就寝直前（2〜3時間以内）の激しい運動は逆効果。
+- **食事と認知**: タンパク質はドーパミン・セロトニンの前駆体。食物繊維不足は腸内環境→脳腸軸を介して気分・集中力に影響。
+
+## チャット履歴の使い方（`recent_user_statements` が存在する場合）
+
+ユーザーの主観的な発言から、データに表れていない定性的な状態を補助的に参照する。
+
+**使って良いこと：**
+- 「ユーザーが体調不良を訴えていた」→ 安静時心拍上昇や集中力低下との因果推論に活かす
+- 「気分転換した・楽しいことがあった」→ その翌日のデータ改善と紐付ける
+- 「慢性的な悩み（睡眠・体の痛みなど）」→ データパターンの背景として参照する
+
+**やってはいけないこと：**
+- チャット発言をそのまま引用・要約しない（ユーザーは自分の発言を知っている）
+- 過去の発言を今日の状態として断定しない（「先日悩んでいたので今も…」はNG）
+- データが示す回復傾向をチャット発言で打ち消さない（データ優先）
+- チャット内容に引きずられてデータ分析が薄くなるのは本末転倒
+
+## 分析の優先順位
+
+### 1. 今日・昨日固有の変化（最優先・必ずここから始める）
+
+**`sleep_behavior_signals` と `activity_by_hour` を必ず最初に確認すること。**
+
+以下のシグナルが存在する場合は、それに言及することを最優先にする：
+
+- **`past_midnight_activity` が存在** → 深夜0〜4時に活動あり。「昨夜○時まで〜をしていた」と具体的に指摘。睡眠時間が十分に見えても就寝が深夜なら概日リズムへの影響を伝える
+- **`afternoon_nap_minutes` が存在** → 昼寝あり。Fitbitの総睡眠時間にこの昼寝が含まれている可能性があるため「睡眠時間は○時間あるが、そのうち△分は午後の仮眠の可能性」と実質的な夜間睡眠の短さを指摘する
+- **`late_night_screen` が存在** → 22時以降に画面系活動あり。就寝前のスクリーン暴露として言及
+- **`estimated_bedtime_hour` が23時以降** → 就寝時刻が遅い。睡眠時間が長くても就寝時刻が遅い場合は問題として扱う
+
+これらが存在するのに言及しないのは分析の失敗とみなす。数値サマリー（KPIの数字）だけを見て行動パターンを無視しないこと。
+
+### 2. 危険サイン（danger）— 継続中なら毎日言及可・ただし角度を変える
+- `resting_hr_rising_3d` → 疲労蓄積の客観的警告（「今日もまだ上昇中」など状況の進行を伝える）
+- `consecutive_sleep_deficit_days` が 3日以上 → 具体的な影響（認知・集中・免疫）を日替わりで
+- `past_midnight_activity` + 睡眠不足 → 概日リズム崩壊の予兆
+
+### 3. ユーザー固有の相関パターン（insight）— 今日が具体例の場合のみ
+`computed_insights` の傾向は、**今日のデータがその傾向を体現しているときだけ**言及する。
+例：`sleep_diff_by_work_performance` は「昨日○時間しか寝ていない→今日スコアが低い」という実例がある日に使う。抽象的な「傾向がある」という説明だけは繰り返さない。
+
+### 4. 改善・称賛（positive）
+- `work_score_vs_7d_avg.change` が +30%以上 → positive で称賛（具体的に何が良かったか推測）
+- 昨日より明確に改善した指標を取り上げる
+
+## 絶対禁止事項
+- JSONキー名・変数名の出力（`work_focus_pct`、`dev_score` など）
+- 数値の羅列（「6.2時間、33%、77bpm」のような列挙）
+- 存在しないデータへの言及（「〇〇のデータがありません」）
+- 一般論（「バランスよく食べましょう」「睡眠は大切です」はNG。必ずこのユーザーのデータに根拠を置く）
+- `sleep_hours` がnull/0の場合：夜間活動（DEVELOP/MEDIA/GAMEなど）が1h以上あれば徹夜コメントOK、なければ睡眠コメント禁止
+
+## 出力ルール
+- **件数: 2〜3件のみ**（量より質。最も価値ある洞察に絞る。4件以上は絶対NG）
+- **1件 = 90文字以内**（3行に収まる量。超えたら必ず削る）
+- **末尾に具体的なアクション**（「〜を試してみて」など個別具体的に。「十分な睡眠を」はNG）
+- 文字数チェック: 出力前に各messageが90文字以内であることを必ず確認すること
 
 ## 出力形式（JSONのみ・他のテキスト一切不要）
 [
-  {{"type": "positive"|"warning"|"insight", "message": "1文・アクション付き・60字以内"}}
+  {{"type": "positive"|"warning"|"danger"|"insight", "message": "1〜2文・アクション付き・150文字以内"}}
 ]
 """
 
