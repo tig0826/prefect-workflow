@@ -158,7 +158,7 @@ SELECT
         WHEN cat_main = 'WORK' THEN 50
         WHEN cat_main = 'DEVELOP' THEN 50
         WHEN cat_main = 'SOCIAL' THEN 40
-        WHEN raw_usage_type = 'gaming' AND cat_sub = 'ゲーム' THEN 38
+        WHEN raw_usage_type = 'gaming' AND cat_sub = 'ゲーム' THEN 55
         WHEN cat_main = 'ENTERTAINMENT' THEN 35
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
