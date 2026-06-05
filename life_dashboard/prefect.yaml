@@ -125,6 +125,17 @@ deployments:
     parameters: {}
     enforce_parameter_schema: true
 
+  - name: life_geocode_places
+    tags: *common_tags
+    entrypoint: timeline_exporter/geocode_flow.py:geocode_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 6時間ごと（Places API 呼び出しは未キャッシュ分のみ）
+      - cron: "30 */6 * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
+
 
   - name: life_iceberg_compaction
     tags: *common_tags
