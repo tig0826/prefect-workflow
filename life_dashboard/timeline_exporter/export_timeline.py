@@ -15,14 +15,13 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DEVICE = os.environ["ADB_DEVICE"]
 DOWNLOADS = "/storage/emulated/0/Download"
 TIMELINE_FILENAME = "タイムライン.json"
 TIMELINE_REMOTE = f"{DOWNLOADS}/{TIMELINE_FILENAME}"
 
 
 def adb(*args, check=False):
-    cmd = ["adb", "-s", DEVICE] + list(args)
+    cmd = ["adb", "-s", os.environ["ADB_DEVICE"]] + list(args)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if check and result.returncode != 0:
         raise RuntimeError(f"adb {' '.join(args)} failed: {result.stderr}")
