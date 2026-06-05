@@ -13,8 +13,8 @@ WITH src AS (
     SELECT *
     FROM {{ ref('timeline_segments') }}
     WHERE (
-        -- Visits away from home (TYPE_HOME is excluded)
-        (segment_type = 'visit' AND (place_semantic_type IS NULL OR place_semantic_type != 'TYPE_HOME'))
+        -- Visits away from home (any HOME-labeled place is excluded, e.g. TYPE_HOME, INFERRED_HOME)
+        (segment_type = 'visit' AND (place_semantic_type IS NULL OR place_semantic_type NOT LIKE '%HOME%'))
         OR
         -- Vehicle or bicycle activity implies being away from home
         (segment_type = 'activity' AND activity_type IN ('IN_VEHICLE', 'ON_BICYCLE'))
