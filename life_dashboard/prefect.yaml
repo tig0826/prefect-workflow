@@ -70,17 +70,6 @@ deployments:
     parameters: {}
     enforce_parameter_schema: true
 
-  - name: life_bronze_owntracks
-    tags: *common_tags
-    entrypoint: owntracks_exporter/owntracks_flow.py:owntracks_flow
-    work_pool: *common_work_pool
-    schedules:
-      # 廃止予定のため変更なし
-      - cron: "10 * * * *"
-        timezone: "Asia/Tokyo"
-    parameters: {}
-    enforce_parameter_schema: true
-
   - name: life_data_pipeline
     tags: *common_tags
     entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow

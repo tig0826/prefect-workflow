@@ -21,15 +21,12 @@ ICEBERG_TABLES = [
     ("life_silver", "fitbit_heartrate"),
     ("life_silver", "fitbit_sleep"),
     ("life_silver", "fitbit_summary"),
-    ("life_silver", "owntracks_locations"),
-    ("life_silver", "owntracks_stays"),
     # Intermediate
     ("life_gold", "int_aw_afk"),
     ("life_gold", "int_aw_categorized"),
     ("life_gold", "int_fitbit_activity"),
     ("life_gold", "int_fitbit_hr_gaps"),
     ("life_gold", "int_fitbit_sleep"),
-    ("life_gold", "int_owntracks_outing"),
     # Gold marts
     ("life_gold", "mrt_aw_daily_work_summary"),
     ("life_gold", "mrt_behavior_slots_15m"),
