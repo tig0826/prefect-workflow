@@ -14,7 +14,6 @@ sources:
       - name: aw_android_unlock_external
       - name: asken_external
       - name: fitbit_external
-      - name: owntracks_external
       - name: timeline_external
 
   - name: iceberg_life_gold
