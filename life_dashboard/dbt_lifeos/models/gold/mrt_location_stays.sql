@@ -16,7 +16,7 @@ WITH visits AS (
     SELECT *
     FROM {{ ref('timeline_segments') }}
     WHERE segment_type = 'visit'
-      AND COALESCE(place_semantic_type, '') != 'TYPE_HOME'
+      AND (place_semantic_type IS NULL OR place_semantic_type NOT LIKE '%HOME%')
     {% if is_incremental() %}
       AND event_date_jst >= CAST(date_add('day', -{{ reprocess_days }}, current_date) AS DATE)
     {% endif %}
