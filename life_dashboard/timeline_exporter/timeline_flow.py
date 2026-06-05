@@ -62,8 +62,11 @@ def timeline_sync_flow():
     if count > 0:
         create_external(system_name="timeline")
         sync_table_partition(table_name="timeline_external")
-        geocoded = task_geocode()
-        print(f"Geocoded {geocoded} new places.")
+
+    # Always retry uncached place_ids so transient API failures get recovered
+    # on the next run, even when no new segments arrived this time.
+    geocoded = task_geocode()
+    print(f"Geocoded {geocoded} new places.")
 
 
 if __name__ == "__main__":
