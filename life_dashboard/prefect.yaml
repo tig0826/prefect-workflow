@@ -75,9 +75,13 @@ deployments:
     entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow
     work_pool: *common_work_pool
     concurrency_limit: 1
+    concurrency_options:
+      # slot が埋まっていれば新規 run は即 Cancelled。
+      # AwaitingConcurrencySlot で溜まらない。
+      collision_strategy: CANCEL_NEW
     schedules:
-      # 15分ごと・エクスポートの5分後（:00/:15/:30/:45 export → :05/:20/:35/:50 dbt）
-      - cron: "5,20,35,50 * * * *"
+      # 10分ごと。reprocess_days=14 なのでスキップされても次の run で吸収される。
+      - cron: "*/10 * * * *"
         timezone: "Asia/Tokyo"
     parameters: {}
     enforce_parameter_schema: true
