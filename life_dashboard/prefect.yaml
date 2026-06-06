@@ -74,8 +74,8 @@ deployments:
     tags: *common_tags
     entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow
     work_pool: *common_work_pool
-    concurrency_limit: 1
-    concurrency_options:
+    concurrency_limit:
+      limit: 1
       # slot が埋まっていれば新規 run は即 Cancelled。
       # AwaitingConcurrencySlot で溜まらない。
       collision_strategy: CANCEL_NEW
