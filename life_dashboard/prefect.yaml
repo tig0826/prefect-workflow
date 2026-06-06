@@ -115,16 +115,6 @@ deployments:
       slot: "night"
     enforce_parameter_schema: false
 
-  - name: life_timeline_sync
-    tags: *common_tags
-    entrypoint: timeline_exporter/timeline_flow.py:timeline_sync_flow
-    work_pool: *common_work_pool
-    schedules:
-      - cron: "0 */6 * * *"
-        timezone: "Asia/Tokyo"
-    parameters: {}
-    enforce_parameter_schema: true
-
   - name: life_geocode_places
     tags: *common_tags
     entrypoint: timeline_exporter/geocode_flow.py:geocode_flow
