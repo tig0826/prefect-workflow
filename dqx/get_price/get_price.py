@@ -12,7 +12,7 @@ from common.get_cheap_item_list import get_cheap_item_list, create_message_cheap
 from common.get_hourly_price import create_message_kishoukaku_hourly_price
 from common.get_price_graph import create_price_graph
 from common.session_cookies import login_dqx_and_save_cookies
-from common.exceptions import SessionExpiredException
+from common.exceptions import SessionExpiredException, SiteMaintenanceException
 
 trino_host = "trino.trino.svc.cluster.local"
 trino_port = 8080
@@ -20,14 +20,24 @@ trino_user = "tig"
 trino_catalog = "iceberg"
 
 
-# 冒険者の広場から価格情報を取得するタスク
+def _retry_unless_maintenance(task, task_run, state) -> bool:
+    """メンテナンス中(SiteMaintenanceException)はリトライしない。それ以外は通常通りリトライ。"""
+    try:
+        state.result(raise_on_failure=True)
+    except SiteMaintenanceException:
+        return False
+    except Exception:
+        return True
+    return False
+
+
 @task(
     name="get exhibit price",
     log_prints=True,
-    # tags=["dqx_price"],
-    timeout_seconds=60,
-    retries=30,
-    retry_delay_seconds=1,
+    timeout_seconds=120,
+    retries=3,
+    retry_delay_seconds=10,
+    retry_condition_fn=_retry_unless_maintenance,
 )
 def search_price(item_name, dt=None):
     try:
@@ -79,7 +89,12 @@ def search_price(item_name, dt=None):
     return df_price
 
 
-@task(name="save table", retries=30, retry_delay_seconds=1)
+@task(
+    name="save table",
+    timeout_seconds=600,
+    retries=3,
+    retry_delay_seconds=10,
+)
 def save_to_iceberg(table_name, schema_name, df):
     """自作のtrino APIを使用して、Icebergにデータを保存するタスク"""
     trino = TrinoAPI(
@@ -116,7 +131,7 @@ def send_cheap_saibou_price():
         send_to_discord(message)
 
 
-@flow(log_prints=True)
+@flow(log_prints=True, timeout_seconds=900)
 def get_price_hourly(skip_insert: bool = False):
     focus_item = [
         "輝晶核",
@@ -135,7 +150,12 @@ def get_price_hourly(skip_insert: bool = False):
     schema_name = "dqx"
     table_name = "price_hourly"
     for item_name in focus_item:
-        df_price = search_price(item_name, dt)
+        try:
+            df_price = search_price(item_name, dt)
+        except SiteMaintenanceException:
+            # 冒険者の広場メンテナンス中。価格取得・通知・mart更新をすべてスキップして正常終了。
+            print("⏸ 冒険者の広場メンテナンス中のため、今回の価格取得をスキップします。")
+            return
         # 価格情報を保存
         if len(df_price) > 0 and not skip_insert:
             save_to_iceberg(table_name, schema_name, df_price)
