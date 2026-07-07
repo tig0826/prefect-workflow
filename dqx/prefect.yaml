@@ -85,9 +85,9 @@ deployments:
   concurrency_limit:
   schedules:
   - cron: "1 0 * * *"
-    timezone: Asia/Tokyo
-    day_or: true
+    timezone: "Asia/Tokyo"
     active: true
+    slug: "daily-0001-jst"
   enforce_parameter_schema: true
 
 # - name: dqx_get_price
@@ -126,15 +126,13 @@ deployments:
   schedules:
   - cron: "1 * * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
     active: true
+    slug: "hourly-0001-jst"
   enforce_parameter_schema: true
 
 - name: dqx_send_price_image
   tags:
-    - dqx
-  logging:
-    level: DEBUG
+  - dqx
   entrypoint: get_price/get_price.py:send_price_image
   work_pool:
     name: kubernetes
@@ -145,7 +143,6 @@ deployments:
   description:
   parameters: {}
   concurrency_limit:
-  schedules:
   schedules: []
   enforce_parameter_schema: true
 
@@ -169,9 +166,7 @@ deployments:
 
 - name: dqx_send_cheap_saibou_price
   tags:
-    - dqx
-  logging:
-    level: DEBUG
+  - dqx
   entrypoint: get_price/get_price.py:send_cheap_saibou_price
   work_pool:
     name: kubernetes
@@ -191,8 +186,8 @@ deployments:
   schedules:
   - cron: "15 * * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
-    active: true
+    active: false
+    slug: "hourly-0015-jst"
   entrypoint: create_llm_message/create_llm_message.py:create_llm_message
   work_pool:
     name: kubernetes
@@ -211,8 +206,8 @@ deployments:
   schedules:
   - cron: "15 12 * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
     active: true
+    slug: "daily-1215-jst"
   entrypoint: create_llm_erudition_message/create_llm_erudition_message.py:create_llm_erudition_message
   work_pool:
     name: kubernetes
@@ -231,8 +226,8 @@ deployments:
   schedules:
   - cron: "*/10 * * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
     active: true
+    slug: "every-10min-jst"
   entrypoint: get_momon_bazzar/get_momon_bazzar.py:get_momon_bazzar
   work_pool:
     name: kubernetes
@@ -251,8 +246,8 @@ deployments:
   schedules:
   - cron: "0 */3 * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
     active: true
+    slug: "every-3h-0000-jst"
   entrypoint: post_diary/post_diary.py:post_diary
   work_pool:
     name: kubernetes
@@ -273,6 +268,7 @@ deployments:
     timezone: "Asia/Tokyo"
     day_or: true
     active: true
+    slug: "keepalive-streamlit-12h"
   entrypoint: keepalive_streamlit/keepalive_streamlit.py:keepalive_streamlit
   work_pool:
     name: kubernetes
@@ -306,9 +302,29 @@ deployments:
   schedules:
   - cron: "5 20 * * *"
     timezone: "Asia/Tokyo"
-    day_or: true
     active: true
+    slug: "daily-2005-jst"
   entrypoint: notify_cookie_expiration/notify_cookie_expiration.py:notify_cookie_expiration
+  work_pool:
+    name: kubernetes
+    job_variables:
+      image: tig0826/dqx
+    work_queue_name:
+  version:
+  description:
+  parameters: {}
+  concurrency_limit:
+  enforce_parameter_schema: true
+
+- name: dqx_iceberg_maintenance
+  tags:
+  - dqx
+  schedules:
+  - cron: "0 1 * * *"
+    timezone: "Asia/Tokyo"
+    active: true
+    slug: "daily-0100-jst"
+  entrypoint: iceberg_maintenance/iceberg_maintenance.py:iceberg_maintenance
   work_pool:
     name: kubernetes
     job_variables:
