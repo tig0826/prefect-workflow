@@ -141,3 +141,15 @@ deployments:
         timezone: "Asia/Tokyo"
     parameters: {}
     enforce_parameter_schema: true
+
+  - name: life_hive_lock_janitor
+    tags: *common_tags
+    entrypoint: common/hive_lock_janitor.py:hive_lock_janitor
+    work_pool: *common_work_pool
+    schedules:
+      # 5分ごと。kill/timeout した dbt run が残す孤立 Hive ロックを、
+      # 手動対応を待たず 1 インターバル以内に除去する（HIVE_TABLE_LOCK_NOT_ACQUIRED 対策）。
+      - cron: "*/5 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: true
