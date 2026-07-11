@@ -70,14 +70,18 @@ def _execute(action: str, sql: str, schema: str, table: str) -> bool:
 
 
 @task(name="Maintain Iceberg table", retries=2, retry_delay_seconds=30)
-def maintain_table(schema: str, table: str):
-    """optimize -> expire_snapshots -> remove_orphan_files for one table.
+def maintain_table(schema: str, table: str, reclaim: bool = False):
+    """optimize (always) -> expire_snapshots + remove_orphan_files (only if reclaim).
 
-    Order matters: optimize creates a new snapshot over the compacted files,
-    expire_snapshots then unlinks the pre-compaction small files, and
-    remove_orphan_files finally deletes them from the object store. Optimize
-    alone would grow the object count unbounded -- the in-repo contributor to
-    the MinIO/NFS list-latency slowdown.
+    optimize compacts small files into ~128MB ones and is cheap; it is the daily
+    job that keeps the pipeline healthy.
+
+    The reclaim ops are gated behind `reclaim` because BOTH are brutally slow on
+    the single NFS/ZFS MinIO backend: expire_snapshots must delete the data files
+    of every expiring snapshot (a huge one-time backlog since reclaim had never
+    run), and remove_orphan_files recursively LISTs each table's whole object-store
+    tree. Running them daily on all tables turned a ~10min job into a 12h+ run that
+    hammered MinIO all day and starved the pipeline (2026-07-11). They run weekly.
     """
     rel = f'"{schema}"."{table}"'
     if not _execute(
@@ -85,26 +89,39 @@ def maintain_table(schema: str, table: str):
         f"ALTER TABLE {rel} EXECUTE optimize(file_size_threshold => '{FILE_SIZE_THRESHOLD}')",
         schema, table,
     ):
-        return  # non-Iceberg / view: expire & remove won't apply either
-    _execute(
-        "Expired snapshots",
-        f"ALTER TABLE {rel} EXECUTE expire_snapshots(retention_threshold => '{RETENTION}')",
-        schema, table,
-    )
-    _execute(
-        "Removed orphan files",
-        f"ALTER TABLE {rel} EXECUTE remove_orphan_files(retention_threshold => '{RETENTION}')",
-        schema, table,
-    )
+        return  # non-Iceberg / view: reclaim ops won't apply either
+    if reclaim:
+        _execute(
+            "Expired snapshots",
+            f"ALTER TABLE {rel} EXECUTE expire_snapshots(retention_threshold => '{RETENTION}')",
+            schema, table,
+        )
+        _execute(
+            "Removed orphan files",
+            f"ALTER TABLE {rel} EXECUTE remove_orphan_files(retention_threshold => '{RETENTION}')",
+            schema, table,
+        )
 
 
-@flow(name="Iceberg Compaction", log_prints=True)
-def iceberg_compaction_flow():
-    """Compact + reclaim all lifeos Iceberg tables to cap object count. Runs daily."""
-    print("=== Maintaining all lifeos Iceberg tables ===")
+# Runaway guard: on 2026-07-11 the first run with reclaim enabled ran 12h+ and
+# hammered MinIO all day. optimize-only should finish in ~10min; the weekly
+# reclaim run is heavier but this caps it -- hitting it means something is wrong.
+COMPACTION_TIMEOUT_SECONDS = 10800  # 3h
+
+
+@flow(name="Iceberg Compaction", log_prints=True, timeout_seconds=COMPACTION_TIMEOUT_SECONDS)
+def iceberg_compaction_flow(reclaim: bool = False):
+    """Compact + optionally reclaim all lifeos Iceberg tables.
+
+    reclaim=False (daily): optimize only -- fast, no MinIO stress.
+    reclaim=True  (weekly): also expire_snapshots + remove_orphan_files -- heavy
+    on the NFS-backed MinIO, so confined to one off-peak run per week.
+    """
+    mode = "optimize + expire + remove_orphan_files" if reclaim else "optimize only"
+    print(f"=== Maintaining all lifeos Iceberg tables ({mode}) ===")
     tables = discover_tables()
     for schema, table in tables:
-        maintain_table(schema, table)
+        maintain_table(schema, table, reclaim=reclaim)
     print(f"Maintenance complete ({len(tables)} tables).")
 
 
