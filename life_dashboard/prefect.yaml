@@ -136,10 +136,25 @@ deployments:
     entrypoint: common/compaction_flow.py:iceberg_compaction_flow
     work_pool: *common_work_pool
     schedules:
-      # 毎日 03:00 JST（パイプラインの稼働が少ない時間帯）
-      - cron: "0 3 * * *"
+      # 月〜土 03:00 JST: optimize のみ（軽量・約10分、MinIO負荷なし）。
+      # expire_snapshots / remove_orphan_files は MinIO-on-NFS では初回catch-upが
+      # 激重（12h事件）なので日次から除外し、週次 deep に集約。
+      - cron: "0 3 * * 1-6"
         timezone: "Asia/Tokyo"
     parameters: {}
+    enforce_parameter_schema: true
+
+  - name: life_iceberg_compaction_deep
+    tags: *common_tags
+    entrypoint: common/compaction_flow.py:iceberg_compaction_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 日曜 03:00 JST のみ: optimize + expire + remove_orphan_files（重い reclaim を
+      # オフピークの週1に集約）。3時間の timeout ガードあり。
+      - cron: "0 3 * * 0"
+        timezone: "Asia/Tokyo"
+    parameters:
+      reclaim: true
     enforce_parameter_schema: true
 
   - name: life_hive_lock_janitor
