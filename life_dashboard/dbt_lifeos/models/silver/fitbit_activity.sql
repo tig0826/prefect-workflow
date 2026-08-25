@@ -5,13 +5,21 @@
     table_type='iceberg'
 ) }}
 
+{% set reprocess_days = var('reprocess_days', 14) %}
+
 WITH base AS (
     SELECT
         dt,
         json_extract_scalar(raw_json, '$.raw_json') AS real_json
     FROM {{ source('hive_life_bronze', 'fitbit_external') }}
     {% if is_incremental() %}
-    WHERE dt >= (SELECT MAX(dt) FROM {{ this }})
+    -- MAX(dt) 起点だと、遅れて届いた活動ログや一時的に取得失敗した日を
+    -- 取り込めないまま確定してしまう。直近 N 日を読み直す。
+    -- (fitbit_summary.sql の同じコメント参照)
+    WHERE dt >= (
+        SELECT CAST(date_add('day', -{{ reprocess_days }}, CAST(MAX(dt) AS DATE)) AS VARCHAR)
+        FROM {{ this }}
+    )
     {% endif %}
 ),
 

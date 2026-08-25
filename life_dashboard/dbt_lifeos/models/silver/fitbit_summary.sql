@@ -5,13 +5,24 @@
     table_type='iceberg'
 ) }}
 
+{% set reprocess_days = var('reprocess_days', 14) %}
+
 WITH base AS (
     SELECT
         dt,
         json_extract_scalar(raw_json, '$.raw_json') AS real_json
     FROM {{ source('hive_life_bronze', 'fitbit_external') }}
     {% if is_incremental() %}
-    WHERE dt >= (SELECT MAX(dt) FROM {{ this }})
+    -- dt >= MAX(dt) だけだと「翌日の dt が現れた瞬間に前日を二度と読み直さない」
+    -- ため、その一瞬 bronze が欠けていた日（Fitbit API の一時失敗や
+    -- トークン切れ）が恒久的に凍結する。bronze が後から復旧しても
+    -- silver は NULL のままで、gold の COALESCE により 0歩・0kcal・睡眠なしと
+    -- して表示され続ける。直近 N 日を毎回読み直して自己修復させる。
+    -- 1日1行のモデルなので再マージのコストは無視できる。
+    WHERE dt >= (
+        SELECT CAST(date_add('day', -{{ reprocess_days }}, CAST(MAX(dt) AS DATE)) AS VARCHAR)
+        FROM {{ this }}
+    )
     {% endif %}
 ),
 parsed AS (
