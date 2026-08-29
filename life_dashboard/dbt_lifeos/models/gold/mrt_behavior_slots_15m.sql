@@ -54,12 +54,20 @@ sub_aggregated AS (
     GROUP BY 1,2,3,4,5
 ),
 
+-- 帯（1スロット1ラベル）の勝者判定には外出先滞在を入れない。
+-- 13時間の合宿のような長い滞在があると、活動ログが無いスロットだけで
+-- OUTING が勝ち、帯が緑と他の色でまばらに切り替わって読めなくなる。
+-- 「外出していた」という事実は下の is_outing 下線レイヤーが持つ。
+band_candidates AS (
+    SELECT * FROM sub_aggregated WHERE cat_main <> 'OUTING'
+),
+
 main_aggregated AS (
     SELECT
         *,
         SUM(sub_overlap_sec) OVER (PARTITION BY time_slot_jst, cat_main) AS main_overlap_sec,
         SUM(CASE WHEN priority >= 20 THEN sub_overlap_sec ELSE 0 END) OVER (PARTITION BY time_slot_jst) AS active_total_sec
-    FROM sub_aggregated
+    FROM band_candidates
 ),
 
 ranked_observed AS (
@@ -122,6 +130,18 @@ transit_context AS (
     FROM sub_aggregated
     WHERE cat_main = 'TRANSIT'
     GROUP BY time_slot_jst
+),
+
+-- 外出先滞在も同じく下線レイヤーとして出す。
+-- ★TRANSIT と混ぜてはいけない★ 混ぜると実家に数日帰省した期間が
+-- 丸ごと「移動」に見える。UI は2色で描き分ける。
+outing_context AS (
+    SELECT
+        time_slot_jst,
+        SUM(sub_overlap_sec) AS outing_sec
+    FROM sub_aggregated
+    WHERE cat_main = 'OUTING'
+    GROUP BY time_slot_jst
 )
 
 SELECT
@@ -131,10 +151,12 @@ SELECT
     f.cat_main,
     f.cat_sub,
     f.overlap_sec,
-    -- 60秒未満のかすりは移動扱いしない（スロット境界のノイズ除去）
+    -- 60秒未満のかすりは対象にしない（スロット境界のノイズ除去）
     COALESCE(tc.transit_sec, 0) >= 60 AS is_transit,
     CASE WHEN COALESCE(tc.transit_sec, 0) >= 60 THEN tc.transit_sub END AS transit_kind,
+    COALESCE(oc.outing_sec, 0) >= 60 AS is_outing,
     CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp) AS transformed_at_jst
 FROM final_slots f
 LEFT JOIN transit_context tc ON tc.time_slot_jst = f.time_slot_jst
+LEFT JOIN outing_context oc ON oc.time_slot_jst = f.time_slot_jst
 WHERE f.time_slot_jst < CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp)
