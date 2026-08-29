@@ -11,6 +11,24 @@ models:
       - name: event_pk
         tests: [unique, not_null]
 
+  - name: int_aw_media
+    description: >
+      実際に再生されていた時間（state='playing'）。前面にあっただけの
+      int_aw_categorized と区別して使う。YouTube Music を YouTube から分離済み。
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
+  - name: int_aw_web
+    description: >
+      Android Chrome のタブ滞在をドメイン＋分類に落としたもの。
+      url のパスと page_title は意図的に捨てている（生値は life_silver.aw_web_events）。
+      cat_sub='プライベート' は本人向けの内訳ラベルで、AI FB 向けマートでは
+      'ネットサーフィン' に畳んで区別できないようにする。
+    columns:
+      - name: event_pk
+        tests: [unique, not_null]
+
   - name: int_fitbit_activity
     columns:
       - name: event_pk

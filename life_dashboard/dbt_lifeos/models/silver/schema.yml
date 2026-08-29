@@ -11,6 +11,33 @@ models:
       - name: aw_event_pk
         tests: [unique, not_null]
 
+  - name: aw_unlock_events
+    description: Android のロック解除イベント。解錠回数は注意の断片化の直接指標。
+    columns:
+      - name: aw_event_pk
+        tests: [unique, not_null]
+      - name: unlock_ts_jst
+        tests: [not_null]
+
+  - name: aw_media_events
+    description: >
+      Android のメディア再生イベント。再生時間の集計は必ず
+      playback_state='playing' で絞る（他の state は duration ほぼ 0 の遷移マーカー）。
+    columns:
+      - name: aw_event_pk
+        tests: [unique, not_null]
+
+  - name: aw_web_events
+    description: >
+      Android Chrome のタブ滞在。url / page_title の生値はこのモデルにだけ置く
+      （life_silver スキーマ）。上位層はドメイン＋分類のみ。
+      AI FB のコンテキストに url / page_title を渡さないこと。
+    columns:
+      - name: aw_event_pk
+        tests: [unique, not_null]
+      - name: domain
+        tests: [not_null]
+
   - name: asken_meal
     columns:
       - name: meal_pk
@@ -44,4 +71,24 @@ models:
   - name: timeline_segments
     columns:
       - name: segment_pk
+        tests: [unique, not_null]
+
+  - name: fitbit_sleep_stages
+    description: >
+      Fitbit v1.2 の睡眠段階の区間時系列（deep/light/rem/wake + shortData の短時間覚醒）。
+      覚醒区間の時刻が分かるので解錠や画面時間と照合できる。
+      v1 由来の fitbit_sleep は互換のため別に残してある（v1 は restless を睡眠に含み約20%多い）。
+    columns:
+      - name: stage_pk
+        tests: [unique, not_null]
+      - name: stage_start_jst
+        tests: [not_null]
+
+  - name: fitbit_recovery
+    description: >
+      HRV / 呼吸数 / SpO2 / 皮膚温 / VO2max / AZM。前4つは睡眠中計測でカバレッジ55%前後、
+      しかも欠測日が完全に一致する MNAR（悪い夜に限って落ちる）。
+      NULL を 0 埋めしたり「改善」と読まないこと。signals_available>=3 の日だけ複合評価する。
+    columns:
+      - name: target_date
         tests: [unique, not_null]

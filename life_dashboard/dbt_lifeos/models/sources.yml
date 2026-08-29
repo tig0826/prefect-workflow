@@ -12,6 +12,10 @@ sources:
       - name: aw_afk_desktop_o8tfag0_external
       - name: aw_android_test_external
       - name: aw_android_unlock_external
+      # 2026-08-27 追加。bronze には以前から溜まっていたが外部テーブル未登録で
+      # SQL から見えていなかった（aw_flow.py の REGISTERED_BUCKETS 参照）。
+      - name: aw_android_media_external
+      - name: aw_android_web_chrome_external
       - name: asken_external
       - name: fitbit_external
       - name: timeline_external

@@ -52,11 +52,50 @@ def _pct_change(current, baseline) -> str | None:
     return f"{pct:+.0f}%"
 
 
-def _correlation(xs: list, ys: list) -> float | None:
-    """ピアソン相関係数（ペア数が4未満なら None）"""
+# ピアソン相関の臨界値（両側検定）。n = ペア数。
+# 14日窓だと n は最大13なので、有意を主張するには |r| >= 0.553 が必要。
+# 以前はここが「n>=4 かつ |r|>=0.4 なら傾向あり」だったため、偶然と区別できない
+# 相関に「〜の傾向がある」という note を付けてLLMに渡していた（＝根拠のないFBの発生源）。
+_R_CRIT_05 = {
+    10: 0.632, 11: 0.602, 12: 0.576, 13: 0.553, 14: 0.532, 15: 0.514,
+    16: 0.497, 17: 0.482, 18: 0.468, 19: 0.456, 20: 0.444,
+    22: 0.423, 24: 0.404, 26: 0.388, 28: 0.374, 30: 0.361,
+}
+_R_CRIT_01 = {
+    10: 0.765, 11: 0.735, 12: 0.708, 13: 0.684, 14: 0.661, 15: 0.641,
+    16: 0.623, 17: 0.606, 18: 0.590, 19: 0.575, 20: 0.561,
+    22: 0.537, 24: 0.515, 26: 0.496, 28: 0.479, 30: 0.463,
+}
+
+# これ未満のペア数では、どんな |r| でも主張させない。
+MIN_CORR_PAIRS = 10
+
+
+def _r_critical(table: dict[int, float], n: int) -> float:
+    """臨界値テーブルを線形補間して n に対する |r| の閾値を返す。"""
+    keys = sorted(table)
+    if n <= keys[0]:
+        return table[keys[0]]
+    if n >= keys[-1]:
+        return table[keys[-1]]
+    lo = max(k for k in keys if k <= n)
+    hi = min(k for k in keys if k >= n)
+    if lo == hi:
+        return table[lo]
+    ratio = (n - lo) / (hi - lo)
+    return table[lo] + (table[hi] - table[lo]) * ratio
+
+
+def _correlation(xs: list, ys: list) -> dict | None:
+    """ピアソン相関を有意性つきで返す。
+
+    戻り値: {"r": float, "n": int, "confidence": "high"|"moderate"}
+    有意でない（偶然と区別できない）場合は None を返し、呼び出し側で
+    「傾向がある」と語らせない。ペア数が MIN_CORR_PAIRS 未満でも None。
+    """
     pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
     n = len(pairs)
-    if n < 4:
+    if n < MIN_CORR_PAIRS:
         return None
     mean_x = sum(p[0] for p in pairs) / n
     mean_y = sum(p[1] for p in pairs) / n
@@ -65,7 +104,12 @@ def _correlation(xs: list, ys: list) -> float | None:
     den_y = sum((p[1] - mean_y) ** 2 for p in pairs) ** 0.5
     if den_x == 0 or den_y == 0:
         return None
-    return round(num / (den_x * den_y), 2)
+    r = round(num / (den_x * den_y), 2)
+    if abs(r) >= _r_critical(_R_CRIT_01, n):
+        return {"r": r, "n": n, "confidence": "high"}
+    if abs(r) >= _r_critical(_R_CRIT_05, n):
+        return {"r": r, "n": n, "confidence": "moderate"}
+    return None
 
 
 @task(name="Fetch enriched daily context from Trino")
@@ -321,34 +365,47 @@ def fetch_context(target_date: str) -> dict:
                     "note": "安静時心拍数が3日間で5bpm以上上昇 — 疲労蓄積・体調悪化の早期サイン",
                 }
 
-        # ── 睡眠 → 翌日ワークスコアの相関 ──
+        # ── 睡眠 → 翌日ワークスコアの相関（有意なときだけ載せる）──
         sleep_seq = [d["sleep_hours"] for d in trend_list[:-1]]
         work_next = [trend_list[i + 1]["work_score"] for i in range(len(trend_list) - 1)]
         corr_sw = _correlation(sleep_seq, work_next)
         if corr_sw is not None:
+            corr_sw["note"] = (
+                "睡眠が長いほど翌日の集中スコアが高い" if corr_sw["r"] > 0
+                else "睡眠が長いほど翌日の集中スコアが低い（夜型の可能性）"
+            )
             insights["sleep_to_next_day_work_corr"] = corr_sw
-            if abs(corr_sw) >= 0.4:
-                note = "睡眠が長いほど翌日の集中スコアが高い傾向" if corr_sw > 0 else "睡眠が長いほど翌日の集中スコアが低い傾向（夜型の可能性）"
-                insights["sleep_work_corr_note"] = note
 
-        # ── 歩数 → 睡眠品質の相関 ──
+        # ── 歩数 → 翌日の睡眠時間の相関（有意なときだけ載せる）──
         steps_seq = [d["steps"] for d in trend_list[:-1]]
         sleep_next = [trend_list[i + 1]["sleep_hours"] for i in range(len(trend_list) - 1)]
         corr_ps = _correlation(steps_seq, sleep_next)
-        if corr_ps is not None and abs(corr_ps) >= 0.4:
-            note = "歩数が多い日は翌日の睡眠が長くなる傾向" if corr_ps > 0 else "歩数が多い日は翌日の睡眠が短くなる傾向"
-            insights["steps_to_next_sleep_corr"] = {"value": corr_ps, "note": note}
+        if corr_ps is not None:
+            corr_ps["note"] = (
+                "歩数が多い日は翌日の睡眠が長い" if corr_ps["r"] > 0
+                else "歩数が多い日は翌日の睡眠が短い"
+            )
+            insights["steps_to_next_sleep_corr"] = corr_ps
 
         # ── ワークスコアの高日と低日の睡眠比較 ──
+        # 以前は各群 2日以上で「知見」として渡していたが、2 vs 2 の平均差は
+        # ノイズと区別できない。各群 4日以上を要求し、n を必ず併記して
+        # 「これは記述統計であって因果ではない」ことをプロンプト側で判断させる。
         high_work_days = [d for d in trend_list if d["work_score"] is not None and d["sleep_hours"] and d["work_score"] >= 60]
         low_work_days = [d for d in trend_list if d["work_score"] is not None and d["sleep_hours"] and d["work_score"] < 30]
-        if len(high_work_days) >= 2 and len(low_work_days) >= 2:
+        if len(high_work_days) >= 4 and len(low_work_days) >= 4:
             avg_sleep_high = sum(d["sleep_hours"] for d in high_work_days) / len(high_work_days)
             avg_sleep_low = sum(d["sleep_hours"] for d in low_work_days) / len(low_work_days)
             insights["sleep_diff_by_work_performance"] = {
                 "avg_sleep_when_high_work": round(avg_sleep_high, 1),
+                "n_high_work_days": len(high_work_days),
                 "avg_sleep_when_low_work": round(avg_sleep_low, 1),
-                "note": f"集中スコア60超の日は平均{avg_sleep_high:.1f}h睡眠、30未満の日は{avg_sleep_low:.1f}h",
+                "n_low_work_days": len(low_work_days),
+                "kind": "descriptive",
+                "note": (
+                    f"集中スコア60超の{len(high_work_days)}日は平均{avg_sleep_high:.1f}h睡眠、"
+                    f"30未満の{len(low_work_days)}日は{avg_sleep_low:.1f}h。記述統計であり因果ではない"
+                ),
             }
 
         # ── 7日平均ワークスコアと今日の比較 ──
@@ -545,6 +602,13 @@ def generate_feedback(ctx: dict, slot: str, api_key: str) -> list[dict]:
 ### 3. ユーザー固有の相関パターン（insight）— 今日が具体例の場合のみ
 `computed_insights` の傾向は、**今日のデータがその傾向を体現しているときだけ**言及する。
 例：`sleep_diff_by_work_performance` は「昨日○時間しか寝ていない→今日スコアが低い」という実例がある日に使う。抽象的な「傾向がある」という説明だけは繰り返さない。
+
+**統計的な扱い（厳守）**
+- 相関の項目（`*_corr`）は**有意性検定を通ったものだけが渡されている**。渡っていない相関について「傾向がある」と推測で語ってはいけない。
+- `confidence: "moderate"` は「偶然ではなさそう」程度の強さしかない。断定せず「〜のようだ」の水準で書く。`"high"` のときだけ明確に述べてよい。
+- `kind: "descriptive"` が付いた項目は**記述統計であって因果ではない**。「Aだから B」と因果として書かない。
+- **相関を根拠に処方を出さない**。処方の根拠は「今日・昨日に実際に起きた出来事」に置く。
+- n（サンプル数）が渡されている項目は、n が小さいことを踏まえて言い切りを避ける。
 
 ### 4. 改善・称賛（positive）
 - `work_score_vs_7d_avg.change` が +30%以上 → positive で称賛（具体的に何が良かったか推測）

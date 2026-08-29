@@ -13,7 +13,13 @@ WITH fitbit_daily AS (
         CAST(dt AS DATE) AS target_date,
         COALESCE(steps, 0) AS steps,
         COALESCE(calories_out, 0) AS calories_out,
-        COALESCE(resting_heart_rate, 0) AS resting_heart_rate,
+        -- ★安静時心拍を 0 で埋めてはいけない★
+        -- 0 は「未計測」であって「心拍が0」ではない。COALESCE(...,0) すると
+        -- 移動平均に 0 が混ざり、7日平均が 78.5 → 68.6 まで落ちる（実測）。
+        -- その結果 AI FB とチャットが「今日は平均より13も高い」と誤って警告していた。
+        -- NULL のまま流せば AVG が自動で無視する。
+        -- NULLIF も併用して、既に 0 で入っている値も未計測として扱う。
+        NULLIF(resting_heart_rate, 0) AS resting_heart_rate,
         
         -- 活動の質
         activity_calories,
@@ -105,7 +111,8 @@ joined_base AS (
         f.sleep_light_minutes,
         f.sleep_rem_minutes,
         f.sleep_wake_minutes,
-        COALESCE(f.resting_heart_rate, 0) AS resting_heart_rate,
+        -- ここも 0 埋め禁止（上と同じ理由）
+        NULLIF(f.resting_heart_rate, 0) AS resting_heart_rate,
         f.weight_kg,
         f.body_fat_pct,
         f.bmi,
@@ -132,11 +139,23 @@ moving_averages AS (
             ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
         ) AS net_calorie_7d_avg,
 
-        -- 過去7日間の安静時心拍数（疲労度のトレンド分析用）
+        -- 過去7日間の安静時心拍数（疲労度のトレンド分析用）。
+        -- NULL は AVG が自動で無視するので、未計測日は平均を歪めない。
         AVG(resting_heart_rate) OVER (
-            ORDER BY target_date 
+            ORDER BY target_date
             ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-        ) AS resting_hr_7d_avg
+        ) AS resting_hr_7d_avg,
+
+        -- 何日分で平均したかを併記する。欠測が多い週の平均を
+        -- 「7日平均」として扱うと比較が成立しないため、下流が判断できるようにする。
+        COUNT(resting_heart_rate) OVER (
+            ORDER BY target_date
+            ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        ) AS resting_hr_7d_n,
+        COUNT(weight_kg) OVER (
+            ORDER BY target_date
+            ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
+        ) AS weight_7d_n
     FROM joined_base
 )
 

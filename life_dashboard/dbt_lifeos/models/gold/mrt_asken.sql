@@ -15,7 +15,10 @@ WITH meal_agg AS (
         SUM(calories_kcal) AS total_calories
     FROM {{ ref('asken_meal') }}
     {% if is_incremental() %}
-    WHERE meal_date >= date_add('day', -7, current_date)
+    -- current_date は Trino のセッションTZ（UTC）基準なので、JST の早朝に1日ずれる
+    -- （JST 08:00 = UTC 前日23:00）。窓が7日と狭いので当日を取り逃す実害が出る。
+    -- 14日窓のモデルは1日のずれが無害なのでそのままにしてある。
+    WHERE meal_date >= date_add('day', -7, CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS DATE))
     {% endif %}
     GROUP BY meal_date, meal_type
 ),
@@ -38,7 +41,10 @@ meal_pivot AS (
 nutrition AS (
     SELECT * FROM {{ ref('asken_nutrition') }}
     {% if is_incremental() %}
-    WHERE meal_date >= date_add('day', -7, current_date)
+    -- current_date は Trino のセッションTZ（UTC）基準なので、JST の早朝に1日ずれる
+    -- （JST 08:00 = UTC 前日23:00）。窓が7日と狭いので当日を取り逃す実害が出る。
+    -- 14日窓のモデルは1日のずれが無害なのでそのままにしてある。
+    WHERE meal_date >= date_add('day', -7, CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS DATE))
     {% endif %}
 )
 

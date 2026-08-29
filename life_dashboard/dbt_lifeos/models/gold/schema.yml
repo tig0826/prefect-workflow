@@ -2,8 +2,30 @@ version: 2
 
 models:
   - name: mrt_behavior_slots_15m
+    description: >
+      UI（Daily Activity Log）用のタイムライン。1スロット=1カテゴリで priority の
+      勝者だけを残すため、分析には使わない（AI FB は mrt_ai_activity_hourly を使う）。
     columns:
       - name: time_slot_jst
+        tests: [unique, not_null]
+
+  - name: mrt_ai_activity_hourly
+    description: >
+      AI FB 専用の活動マート。priority による抑制をせず cat_sub 粒度で持つため、
+      同じ時間帯に複数行が立つのが正しい（睡眠と再生の重なり = 寝落ち視聴が見える）。
+      source をまたぐと時間は重複する点に注意。
+    columns:
+      - name: slot_pk
+        tests: [unique, not_null]
+      - name: activity_date_jst
+        tests: [not_null]
+
+  - name: mrt_ai_phone_daily
+    description: >
+      スマホの解錠回数から注意の断片化を測る日次マート。
+      本人が自分では数えられない数字（実測 32〜67回/日、深夜0-4時に5〜13回）。
+    columns:
+      - name: target_date
         tests: [unique, not_null]
 
   - name: mrt_aw_daily_work_summary
@@ -20,3 +42,14 @@ models:
     columns:
       - name: target_date
         tests: [unique, not_null]
+
+  - name: mrt_ai_screen_hourly
+    description: >
+      画面に向かっていた時間を分単位で重複排除した日×時マート。
+      mrt_ai_activity_hourly を source 横断で合算すると二重計上になる（実測23%過大）ため、
+      「総量」を出すときは必ずこちらを使う。端末別・内容別は mrt_ai_activity_hourly。
+    columns:
+      - name: slot_pk
+        tests: [unique, not_null]
+      - name: activity_date_jst
+        tests: [not_null]
