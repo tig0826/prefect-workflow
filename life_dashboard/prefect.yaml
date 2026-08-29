@@ -33,7 +33,7 @@ definitions:
     job_variables:
       image: "{{ prefect.variables.life_image_name }}"
       env:
-        PREFECT_LOGGING_EXTRA_LOGGERS: "fitbit_exporter,asken_exporter,aw_exporter"
+        PREFECT_LOGGING_EXTRA_LOGGERS: "fitbit_exporter,asken_exporter,aw_exporter,geocode_places"
 
 # the deployments section allows you to provide configuration for deploying flows
 deployments:
@@ -70,6 +70,23 @@ deployments:
     parameters: {}
     enforce_parameter_schema: true
 
+  - name: life_bronze_aw_reconcile
+    tags: *common_tags
+    entrypoint: aw_exporter/aw_reconcile_flow.py:aw_reconcile_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 日次 03:40。aw_flow は「昨日+今日」しか取らないため、クラスタ障害や
+      # スマホの遅延同期で空いた穴が永久に埋まらない。AW サーバは全履歴を持って
+      # いるので、日次で突き合わせて埋め直す。
+      # 04:00 前に置くのは、朝の AI FB が読む時点で gold が揃っているようにするため
+      # （dbt は10分ごと・reprocess_days=14 なので埋め直せば自動で伝播する）。
+      - cron: "40 3 * * *"
+        timezone: "Asia/Tokyo"
+    parameters:
+      lookback_days: 30
+      dry_run: false
+    enforce_parameter_schema: false
+
   - name: life_data_pipeline
     tags: *common_tags
     entrypoint: dbt_lifeos/main_data_flow.py:main_data_flow
@@ -86,37 +103,50 @@ deployments:
     parameters: {}
     enforce_parameter_schema: true
 
-  - name: life_ai_feedback_morning
+  # ─── AI フィードバック ──────────────────────────────────────
+  # 旧構成（朝8時 / 昼13時 / 夜22時 の3回）は廃止した。
+  # 実測で3枠が同じネタを再放送していた（直近30日70件のうち81%が「深夜」に言及、
+  # 49%が「概日リズム」）。生活習慣は日次では変化しないので、1日に3回
+  # 「新しい洞察」を要求すると必ず同じ話の言い換えになる。
+  #
+  # 新構成:
+  #   life_ai_feedback_gate  … 05:00-11:00 に15分ごと。起床を検知したら1回だけ発火。
+  #                            11時までに検知できなければ徹夜/未装着として強制発火。
+  #   （日次本体は gate から呼ばれるので deployment を持たない）
+  - name: life_ai_feedback_gate
     tags: *common_tags
-    entrypoint: ai_feedback/ai_feedback_flow.py:ai_feedback_flow
+    entrypoint: ai_feedback/daily_flow.py:ai_feedback_wake_gate_flow
     work_pool: *common_work_pool
     schedules:
-      - cron: "0 8 * * *"
+      # 05:00〜11:00 の15分ごと。生成済みなら即終了するので空振りは軽い。
+      # Fitbit の同期は端末次第で遅れるため、時刻固定ではなくポーリングにしている。
+      - cron: "*/15 5-11 * * *"
         timezone: "Asia/Tokyo"
     parameters:
-      slot: "morning"
+      force_hour: 11
     enforce_parameter_schema: false
 
-  - name: life_ai_feedback_noon
+  # 週次。処方（今週の実験）を出すのはここだけ。
+  # SQL探索権限と検索を持ち、介入日での前後比較をして issue を1つ立てる。
+  - name: life_ai_feedback_weekly
     tags: *common_tags
-    entrypoint: ai_feedback/ai_feedback_flow.py:ai_feedback_flow
+    entrypoint: ai_feedback/weekly_flow.py:ai_feedback_weekly_flow
     work_pool: *common_work_pool
     schedules:
-      - cron: "0 13 * * *"
+      # 月曜 07:30。日次 gate（05:00-11:00）と重なるが、日次は起床検知で1回だけ
+      # 走るので競合しない。週次の対象期間は前日（日曜）まで。
+      - cron: "30 7 * * 1"
         timezone: "Asia/Tokyo"
-    parameters:
-      slot: "noon"
+    parameters: {}
     enforce_parameter_schema: false
 
-  - name: life_ai_feedback_night
+  # 手動リラン用（起床検知を待たずに生成したいとき）。スケジュールなし。
+  - name: life_ai_feedback_daily_manual
     tags: *common_tags
-    entrypoint: ai_feedback/ai_feedback_flow.py:ai_feedback_flow
+    entrypoint: ai_feedback/daily_flow.py:ai_feedback_daily_flow
     work_pool: *common_work_pool
-    schedules:
-      - cron: "0 22 * * *"
-        timezone: "Asia/Tokyo"
     parameters:
-      slot: "night"
+      force: true
     enforce_parameter_schema: false
 
   - name: life_geocode_places

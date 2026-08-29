@@ -1,10 +1,27 @@
+-- ★merge ではなく delete+insert を使う理由★
+--
+-- あすけんの日次データは「その日のスナップショット」であり、行が減ることがある
+-- （ユーザーが入力を削除する）。merge + unique_key='meal_pk' は
+-- 「あるものを追加・更新」しかしないため、**削除された行が永久に残る**。
+--
+-- 実害（2026-08-27）: 夕食のケーキ2品を削除したのに silver に残り、
+-- 品目の合計 2549kcal / 栄養テーブル 1018kcal という矛盾が発生した
+-- （栄養は日次1行なので merge でも正しく上書きされていた）。
+-- その結果チャットが存在しない食事を根拠にアドバイスしていた。
+--
+-- delete+insert + unique_key='meal_date' で、対象日の行をまとめて入れ替える。
+--
+-- 注意: config() は Jinja 式なので中に -- コメントを書くと
+-- 「invalid syntax for function call expression」で落ちる。説明はここに書く。
 {{ config(
     materialized='incremental',
-    incremental_strategy='merge',
-    unique_key='meal_pk',
+    incremental_strategy='delete+insert',
+    unique_key='meal_date',
     table_type='iceberg',
     format='parquet'
 ) }}
+
+{% set reprocess_days = var('reprocess_days', 14) %}
 
 WITH raw_asken AS (
     SELECT
@@ -12,7 +29,9 @@ WITH raw_asken AS (
         meal_records
     FROM {{ source('hive_life_bronze', 'asken_external') }}
     {% if is_incremental() %}
-    WHERE CAST(dt AS DATE) >= CAST((SELECT MAX(meal_date) FROM {{ this }}) AS DATE)
+    -- MAX(meal_date) 起点だと、過去日の編集（削除・追加）を取り込めない。
+    -- あすけんは後から入力を直すことがあるので直近 N 日を読み直す。
+    WHERE CAST(dt AS DATE) >= date_add('day', -{{ reprocess_days }}, current_date)
     {% endif %}
 ),
 

@@ -17,7 +17,10 @@ WITH base AS (
     FROM {{ ref('int_all_behavior_events') }}
     WHERE source_system = 'activitywatch'
     {% if is_incremental() %}
-    AND CAST(event_date_jst AS DATE) >= date_add('day', -7, current_date)
+    -- current_date は Trino のセッションTZ（UTC）基準なので、JST の早朝に1日ずれる
+    -- （JST 08:00 = UTC 前日23:00）。窓が7日と狭いので当日を取り逃す実害が出る。
+    -- 14日窓のモデルは1日のずれが無害なのでそのままにしてある。
+    AND CAST(event_date_jst AS DATE) >= date_add('day', -7, CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS DATE))
     {% endif %}
 ),
 core_events AS (

@@ -12,7 +12,12 @@ WITH raw_asken AS (
         nutrition_summary
     FROM {{ source('hive_life_bronze', 'asken_external') }}
     {% if is_incremental() %}
-    WHERE CAST(dt AS DATE) >= current_date - INTERVAL '3' DAY
+    -- current_date は Trino のセッションTZ（=UTC）基準なので、JST の早朝に
+    -- 1日ずれて当日を取り逃す（JST 08:00 = UTC 前日23:00）。JST で明示する。
+    -- 窓を 3日→14日に広げているのは、あすけんは後から入力を編集するため
+    -- （実際に夕食を削除しても silver が 1018kcal のまま古い値を保持していた）。
+    WHERE CAST(dt AS DATE) >= date_add('day', -14,
+        CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS DATE))
     {% endif %}
 ),
 

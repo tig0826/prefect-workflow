@@ -1,7 +1,12 @@
+-- ★merge ではなく delete+insert★
+-- event_pk に start_ts / end_ts / is_afk を含むため、上流の境界が変わると
+-- 「別の行」として挿入され古い行が残る。上流 aw_window_events が
+-- AW のポーリングごとに新 id を振られる問題（同モデルのコメント参照）を
+-- そのまま継承して二重計上になっていた。対象日をまとめて入れ替える。
 {{ config(
     materialized='incremental',
-    incremental_strategy='merge',
-    unique_key='event_pk',
+    incremental_strategy='delete+insert',
+    unique_key='event_date_jst',
     table_type='iceberg',
     format='parquet',
     partitioned_by=['event_date_jst']
@@ -81,6 +86,18 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'SOCIAL'
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
               OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SOCIAL'
+            -- ★音楽は娯楽と分ける★
+            -- YouTube Music は前面時間では 'YouTube' → MEDIA に落ちていたため、
+            -- ダッシュボードの Leisure（ENT_CATS = MEDIA/MANGA/GAME/SOCIAL）に
+            -- 作業BGMが混ざっていた。実測で YouTube Music は再生時間で最大
+            -- （754分/7日）で、生活を乱す娯楽とは性質が違う。
+            -- cat_main='MUSIC' は ENT_CATS に含まれないので自動的に娯楽から外れる。
+            -- int_aw_media 側も既に MUSIC を使っているので表記を揃える。
+            -- **YouTube より先に判定すること**（YouTube Music が YouTube にマッチするため）。
+            WHEN LOWER(raw_app_name) LIKE '%youtube music%' OR LOWER(raw_window_title) LIKE '%youtube music%'
+              OR LOWER(raw_app_name) LIKE '%amazon music%' OR LOWER(raw_window_title) LIKE '%amazon music%'
+              OR LOWER(raw_app_name) LIKE '%spotify%' OR LOWER(raw_window_title) LIKE '%spotify%'
+              OR LOWER(raw_app_name) LIKE '%apple music%' THEN 'MUSIC'
             WHEN LOWER(raw_app_name) LIKE '%u-next%' OR LOWER(raw_window_title) LIKE '%u-next%' THEN 'MEDIA'
             WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'MEDIA'
             WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'MEDIA'
@@ -118,6 +135,10 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'コミュニティ'
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
               OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SNS'
+            WHEN LOWER(raw_app_name) LIKE '%youtube music%' OR LOWER(raw_window_title) LIKE '%youtube music%' THEN 'YouTube Music'
+            WHEN LOWER(raw_app_name) LIKE '%amazon music%' OR LOWER(raw_window_title) LIKE '%amazon music%' THEN 'Amazon Music'
+            WHEN LOWER(raw_app_name) LIKE '%spotify%' OR LOWER(raw_window_title) LIKE '%spotify%' THEN 'Spotify'
+            WHEN LOWER(raw_app_name) LIKE '%apple music%' THEN 'Apple Music'
             WHEN LOWER(raw_app_name) LIKE '%u-next%' OR LOWER(raw_window_title) LIKE '%u-next%' THEN 'U-NEXT'
             WHEN LOWER(raw_app_name) LIKE '%dazn%' OR LOWER(raw_window_title) LIKE '%dazn%' THEN 'スポーツ観戦'
             WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'YouTube'
@@ -163,6 +184,7 @@ SELECT
         WHEN cat_main = 'DEVELOP' THEN 50
         WHEN cat_main = 'SOCIAL' THEN 40
         WHEN raw_usage_type = 'gaming' AND cat_sub = 'ゲーム' THEN 55
+        WHEN cat_main = 'MUSIC' THEN 20
         WHEN cat_main = 'ENTERTAINMENT' THEN 35
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
