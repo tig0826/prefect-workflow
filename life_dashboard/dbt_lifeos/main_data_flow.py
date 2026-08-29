@@ -50,13 +50,24 @@ def _dbt_build_with_retry(select_args: list[str]) -> None:
 
 
 @flow(name="LifeOS Integrated Data Pipeline")
-def main_data_flow():
+def main_data_flow(reprocess_days: int | None = None):
+    """
+    reprocess_days overrides the incremental look-back for both layers; leave it unset
+    on scheduled runs. Set it after an upstream outage longer than the default window:
+    the silver models filter bronze on `dt >= current_date - reprocess_days`, so rows
+    backfilled into bronze beyond that boundary are silently never picked up. A late
+    2026-07/08 MinIO outage stranded three weeks of timeline data in bronze this way.
+    """
     sync_table_partition(table_name="timeline_external")
+
+    silver_vars = ["--vars", f"reprocess_days: {reprocess_days}"] if reprocess_days else []
+    gold_vars = ["--vars", f"reprocess_days: {reprocess_days or 7}"]
+
     print("STEP 1: Building Silver & Intermediate layers...")
-    _dbt_build_with_retry(["--select", "models/silver", "models/intermediate"])
+    _dbt_build_with_retry(["--select", "models/silver", "models/intermediate", *silver_vars])
 
     print("STEP 2: Building Gold layer...")
-    _dbt_build_with_retry(["--select", "models/gold", "--vars", "reprocess_days: 7"])
+    _dbt_build_with_retry(["--select", "models/gold", *gold_vars])
 
 
 if __name__ == "__main__":

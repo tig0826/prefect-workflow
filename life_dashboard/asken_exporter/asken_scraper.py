@@ -184,6 +184,20 @@ class AskenScraper:
                         "quantity": qty_tag.text.strip() if qty_tag else None,
                         "kcal": kcal,
                     })
+
+            # 品目が空の場合、「食べなかった（欠食）」と「未記録」を区別する。
+            # あすけんでは欠食は0kcalの記録として「食べなかった」と表示され、
+            # 未記録は「まだ記録されていません。」と表示される。両者を空欄で潰すと
+            # 「まだ記録していない」のか「本当に食べていない」のか区別できないため、
+            # 欠食の場合のみ「食べなかった」を0kcalの品目として残す（未記録は空のまま）。
+            # 未記録の間食にも「間食を 食べなかった」導線があるため、未記録判定を先に行う。
+            if not items:
+                section_text = section.get_text()
+                if "まだ記録されていません" in section_text:
+                    pass  # 未記録: 空のまま
+                elif "食べなかった" in section_text:
+                    items = [{"name": "食べなかった", "quantity": None, "kcal": 0.0}]
+
             records[category] = {"total_kcal": total_kcal, "items": items}
         return records
 
