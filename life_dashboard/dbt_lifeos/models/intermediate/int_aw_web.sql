@@ -57,6 +57,9 @@ classified AS (
             -- 自宅インフラ（aw / trino / prefect など）
             WHEN domain LIKE '%.mynet' OR domain = 'localhost' THEN 'DEVELOP'
 
+            -- 資格試験の過去問道場（ap-siken.com / nw-siken.com / sc-siken.com …）
+            WHEN domain LIKE '%siken.com' THEN 'DEVELOP'
+
             -- 学習・技術情報
             WHEN domain LIKE '%udemy.com' OR domain LIKE '%qiita.com'
               OR domain LIKE '%zenn.dev' OR domain LIKE '%note.com'
@@ -96,6 +99,7 @@ sub AS (
         CASE
             WHEN cat_main = 'AD' THEN '広告・計測'
             WHEN cat_main = 'DEVELOP' AND (domain LIKE '%.mynet' OR domain = 'localhost') THEN '個人開発(自宅インフラ)'
+            WHEN cat_main = 'DEVELOP' AND domain LIKE '%siken.com' THEN '資格勉強'
             WHEN cat_main = 'DEVELOP' THEN '学習'
             WHEN cat_main = 'MANGA' THEN '漫画(Web)'
             WHEN cat_main = 'MEDIA' THEN '動画(Web)'
