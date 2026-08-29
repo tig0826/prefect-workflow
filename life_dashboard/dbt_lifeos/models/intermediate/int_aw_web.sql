@@ -50,7 +50,11 @@ classified AS (
               OR domain LIKE '%adservice%' OR domain LIKE '%applovin%'
               OR domain LIKE '%moloco.com' OR domain LIKE '%inmobi.com' THEN 'AD'
 
-            -- 自宅インフラ・自作ダッシュボード
+            -- Life Dashboard は開発対象ではなく実用しているツールなので生活管理扱い。
+            -- 下の .mynet 総称ルールより先に置く必要がある。
+            WHEN domain = 'life.mynet' THEN 'LIFE'
+
+            -- 自宅インフラ（aw / trino / prefect など）
             WHEN domain LIKE '%.mynet' OR domain = 'localhost' THEN 'DEVELOP'
 
             -- 学習・技術情報
@@ -96,6 +100,7 @@ sub AS (
             WHEN cat_main = 'MANGA' THEN '漫画(Web)'
             WHEN cat_main = 'MEDIA' THEN '動画(Web)'
             WHEN cat_main = 'GAME' THEN 'ゲーム情報'
+            WHEN cat_main = 'LIFE' AND domain = 'life.mynet' THEN '生活管理'
             WHEN cat_main = 'LIFE' THEN 'ネットショッピング'
             WHEN cat_main = 'SOCIAL' THEN 'SNS'
             -- 検索は「何かを調べていた」ことの指標として分けておく

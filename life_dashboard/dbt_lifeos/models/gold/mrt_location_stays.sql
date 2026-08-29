@@ -15,8 +15,10 @@
 WITH visits AS (
     SELECT *
     FROM {{ ref('timeline_segments') }}
+    -- 自宅も残す。以前は place_semantic_type と距離の二重で除外していたが、
+    -- 在宅時間は生活リズムの指標として有用（在宅の連続日数は歩数より直接的に
+    -- 引きこもりを示す）。除外ではなく is_home フラグで区別する。
     WHERE segment_type = 'visit'
-      AND (place_semantic_type IS NULL OR place_semantic_type NOT LIKE '%HOME%')
     {% if is_incremental() %}
       -- The place_name below is resolved by a LEFT JOIN and physically stored, so a
       -- stay materialized before its place_id reached location_place_cache keeps
@@ -45,13 +47,18 @@ with_coords AS (
 ),
 
 filtered AS (
-    SELECT wc.*
+    SELECT wc.*,
+        -- 自宅判定。座標が半径内、または Google のセマンティック種別が HOME。
+        -- 以前はここで自宅を捨てていたため、在宅の記録が一切残らなかった。
+        (
+            ST_Distance(
+                to_spherical_geography(ST_Point(lng, lat)),
+                to_spherical_geography(ST_Point({{ home_lng }}, {{ home_lat }}))
+            ) <= {{ home_radius_m }}
+            OR place_semantic_type LIKE '%HOME%'
+        ) AS is_home
     FROM with_coords wc
     WHERE lat IS NOT NULL AND lng IS NOT NULL
-      AND ST_Distance(
-            to_spherical_geography(ST_Point(lng, lat)),
-            to_spherical_geography(ST_Point({{ home_lng }}, {{ home_lat }}))
-          ) > {{ home_radius_m }}
 ),
 
 joined AS (
@@ -77,5 +84,7 @@ SELECT
         date_diff('minute', CAST(start_ts_jst AS TIMESTAMP), CAST(end_ts_jst AS TIMESTAMP))
         AS INTEGER
     ) AS duration_min,
+    -- true = 自宅。UI と AI FB はこれで「外出先だけ」「在宅含む」を選べる。
+    is_home,
     current_timestamp AT TIME ZONE 'Asia/Tokyo' AS transformed_at_jst
 FROM joined

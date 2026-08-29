@@ -76,13 +76,20 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%udemy%' OR LOWER(raw_window_title) LIKE '%udemy%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'READING'
+            -- ★.mynet の総称ルールより前に置くこと★
+            -- 自作の Life Dashboard は開発対象ではなく既に実用しているツールなので、
+            -- 個人開発ではなく生活管理として扱う。タイトルに .mynet が入る経路もあるため
+            -- 下の DEVELOP ルールより先に判定する必要がある。
+            WHEN LOWER(raw_window_title) LIKE '%life dashboard%'
+              OR LOWER(raw_app_name) LIKE '%life dashboard%' THEN 'LIFE'
             WHEN LOWER(raw_app_name) LIKE '%.mynet%' OR LOWER(raw_window_title) LIKE '%.mynet%'
               OR LOWER(raw_app_name) LIKE '%rancher%' OR LOWER(raw_window_title) LIKE '%rancher%'
               OR LOWER(raw_app_name) LIKE '%superset%' OR LOWER(raw_window_title) LIKE '%superset%'
               OR LOWER(raw_app_name) LIKE '%activitywatch%' OR LOWER(raw_window_title) LIKE '%activitywatch%'
               OR LOWER(raw_app_name) LIKE '%prefect%' OR LOWER(raw_window_title) LIKE '%prefect%'
               OR LOWER(raw_app_name) LIKE '%minio%' OR LOWER(raw_window_title) LIKE '%minio%'
-              OR LOWER(raw_app_name) LIKE '%localhost%' OR LOWER(raw_window_title) LIKE '%localhost%' THEN 'DEVELOP'
+              OR LOWER(raw_app_name) LIKE '%localhost%' OR LOWER(raw_window_title) LIKE '%localhost%'
+              THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'SOCIAL'
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
               OR LOWER(raw_window_title) LIKE '%twitter.com%' OR LOWER(raw_window_title) LIKE '% / x %' THEN 'SOCIAL'
@@ -103,15 +110,29 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%youtube%' OR LOWER(raw_window_title) LIKE '%youtube%' THEN 'MEDIA'
             WHEN LOWER(raw_app_name) LIKE '%ニコニコ動画%' OR LOWER(raw_app_name) LIKE '%ニコニコ生放送%' THEN 'MEDIA'
             WHEN LOWER(raw_app_name) LIKE '%twitch%' OR LOWER(raw_window_title) LIKE '%twitch%' THEN 'MEDIA'
+            -- 2026-08-29 追加。'ネットサーフィン' に落ちていた動画サービス。
+            WHEN LOWER(raw_app_name) LIKE '%prime video%' OR LOWER(raw_window_title) LIKE '%prime video%'
+              OR LOWER(raw_app_name) LIKE '%abema%' OR LOWER(raw_window_title) LIKE '%abema%'
+              OR LOWER(raw_app_name) LIKE '%fotmob%' THEN 'MEDIA'
             WHEN LOWER(raw_app_name) LIKE '%ニコニコ漫画%' OR LOWER(raw_window_title) LIKE '%ニコニコ漫画%'
-              OR LOWER(raw_app_name) LIKE '%コミックDAYS%' OR LOWER(raw_window_title) LIKE '%コミックDAYS%'
+              OR LOWER(raw_app_name) LIKE '%コミックdays%' OR LOWER(raw_window_title) LIKE '%コミックdays%'
               OR LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' OR LOWER(raw_window_title) LIKE '%サンデーうぇぶり%'
               OR LOWER(raw_app_name) LIKE '%マンガワン%' OR LOWER(raw_window_title) LIKE '%マンガワン%'
-              OR LOWER(raw_app_name) LIKE '%ヤンジャン%' OR LOWER(raw_window_title) LIKE '%ヤンジャン%' THEN 'MANGA'
+              OR LOWER(raw_app_name) LIKE '%ヤンジャン%' OR LOWER(raw_window_title) LIKE '%ヤンジャン%'
+              -- 2026-08-29 追加。未分類のまま 'ネットサーフィン' に落ちていた漫画アプリ。
+              -- ジャンプ＋ 186.8分 / マガポケ 98.4分 / ゼブラック 34.8分（10日間）。
+              -- 漫画のブロック効果を測るときにこれらが見えていなかった。
+              OR LOWER(raw_app_name) LIKE '%ジャンプ＋%' OR LOWER(raw_window_title) LIKE '%ジャンプ＋%'
+              OR LOWER(raw_app_name) LIKE '%マガポケ%' OR LOWER(raw_window_title) LIKE '%マガポケ%'
+              OR LOWER(raw_app_name) LIKE '%ゼブラック%' OR LOWER(raw_window_title) LIKE '%ゼブラック%'
+              OR LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' THEN 'MANGA'
             WHEN LOWER(raw_app_name) LIKE '%chrome%' OR LOWER(raw_app_name) LIKE '%edge%' OR LOWER(raw_app_name) LIKE '%brave%' THEN 'BROWSING'
             WHEN usage_type = 'gaming' THEN 'GAME'
             WHEN LOWER(raw_window_title) LIKE '%amazon%' OR LOWER(raw_window_title) LIKE '%楽天市場%' THEN 'LIFE'
             WHEN LOWER(raw_app_name) LIKE '%uber eats%' THEN 'LIFE'
+            -- 記録・健康管理アプリは娯楽ではない
+            WHEN LOWER(raw_app_name) LIKE '%あすけん%' OR LOWER(raw_app_name) LIKE '%pokémon sleep%'
+              OR LOWER(raw_app_name) LIKE '%pokemon sleep%' THEN 'LIFE'
             ELSE 'BROWSING'
         END AS cat_main,
 
@@ -122,6 +143,8 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%gogh%' OR LOWER(raw_window_title) LIKE '%gogh%' THEN 'Gogh'
             WHEN LOWER(raw_app_name) LIKE '%chatgpt%' OR LOWER(raw_window_title) LIKE '%chatgpt%'
               OR LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN '個人開発(AIペアプロ)'
+            WHEN LOWER(raw_window_title) LIKE '%life dashboard%'
+              OR LOWER(raw_app_name) LIKE '%life dashboard%' THEN '生活管理'
             WHEN LOWER(raw_app_name) LIKE '%.mynet%' OR LOWER(raw_window_title) LIKE '%.mynet%'
               OR LOWER(raw_app_name) LIKE '%rancher%' OR LOWER(raw_window_title) LIKE '%rancher%'
               OR LOWER(raw_app_name) LIKE '%superset%' OR LOWER(raw_window_title) LIKE '%superset%'
@@ -145,13 +168,22 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%ニコニコ動画%' OR LOWER(raw_app_name) LIKE '%ニコニコ生放送%' THEN 'niconico'
             WHEN LOWER(raw_app_name) LIKE '%twitch%' OR LOWER(raw_window_title) LIKE '%twitch%' THEN 'Twitch'
             WHEN LOWER(raw_app_name) LIKE '%ニコニコ漫画%' OR LOWER(raw_window_title) LIKE '%ニコニコ漫画%' THEN 'ニコニコ漫画'
-            WHEN LOWER(raw_app_name) LIKE '%コミックDAYS%' OR LOWER(raw_window_title) LIKE '%コミックDAYS%' THEN 'コミックDAYS'
+            WHEN LOWER(raw_app_name) LIKE '%コミックdays%' OR LOWER(raw_window_title) LIKE '%コミックdays%' THEN 'コミックDAYS'
             WHEN LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' OR LOWER(raw_window_title) LIKE '%サンデーうぇぶり%' THEN 'サンデーうぇぶり'
             WHEN LOWER(raw_app_name) LIKE '%マンガワン%' OR LOWER(raw_window_title) LIKE '%マンガワン%' THEN 'マンガワン'
             WHEN LOWER(raw_app_name) LIKE '%ヤンジャン%' OR LOWER(raw_window_title) LIKE '%ヤンジャン%' THEN 'ヤンジャン＋'
+            WHEN LOWER(raw_app_name) LIKE '%ジャンプ＋%' OR LOWER(raw_window_title) LIKE '%ジャンプ＋%' THEN 'ジャンプ＋'
+            WHEN LOWER(raw_app_name) LIKE '%マガポケ%' OR LOWER(raw_window_title) LIKE '%マガポケ%' THEN 'マガポケ'
+            WHEN LOWER(raw_app_name) LIKE '%ゼブラック%' OR LOWER(raw_window_title) LIKE '%ゼブラック%' THEN 'ゼブラック'
+            WHEN LOWER(raw_app_name) LIKE '%サンデーうぇぶり%' THEN 'サンデーうぇぶり'
+            WHEN LOWER(raw_app_name) LIKE '%prime video%' OR LOWER(raw_window_title) LIKE '%prime video%' THEN 'Prime Video'
+            WHEN LOWER(raw_app_name) LIKE '%abema%' OR LOWER(raw_window_title) LIKE '%abema%' THEN 'ABEMA'
+            WHEN LOWER(raw_app_name) LIKE '%fotmob%' THEN 'スポーツ観戦'
             WHEN usage_type = 'gaming' THEN 'ゲーム'
             WHEN LOWER(raw_window_title) LIKE '%amazon%' OR LOWER(raw_window_title) LIKE '%楽天市場%' THEN 'ネットショッピング'
             WHEN LOWER(raw_app_name) LIKE '%uber eats%' THEN 'Uber Eats'
+            WHEN LOWER(raw_app_name) LIKE '%あすけん%' THEN '食事記録'
+            WHEN LOWER(raw_app_name) LIKE '%pokémon sleep%' OR LOWER(raw_app_name) LIKE '%pokemon sleep%' THEN '睡眠記録'
             ELSE 'ネットサーフィン'
         END AS cat_sub
     FROM split_events
