@@ -18,7 +18,16 @@ WITH visits AS (
     WHERE segment_type = 'visit'
       AND (place_semantic_type IS NULL OR place_semantic_type NOT LIKE '%HOME%')
     {% if is_incremental() %}
-      AND event_date_jst >= CAST(date_add('day', -{{ reprocess_days }}, current_date) AS DATE)
+      -- The place_name below is resolved by a LEFT JOIN and physically stored, so a
+      -- stay materialized before its place_id reached location_place_cache keeps
+      -- 'Unknown Place' forever once it falls out of the reprocess window. Pull those
+      -- rows back in regardless of age so they pick up the name on a later run.
+      AND (
+          event_date_jst >= CAST(date_add('day', -{{ reprocess_days }}, current_date) AS DATE)
+          OR segment_pk IN (
+              SELECT stay_pk FROM {{ this }} WHERE place_name = 'Unknown Place'
+          )
+      )
     {% endif %}
 ),
 

@@ -58,7 +58,15 @@ def _fetch_uncached_place_ids() -> list[str]:
 
 
 def _lookup_place(place_id: str, api_key: str) -> dict | None:
-    """Call Places API (New) for a single place_id. Returns dict or None."""
+    """
+    Call Places API (New) for a single place_id.
+
+    A 404 means Google retired the ID — Place IDs are not permanent, and an entry
+    goes away when a business closes/moves or Google merges it. That never recovers,
+    so we return a name-less tombstone: caching it stops this ID from being retried
+    on every 6-hourly run. Returns None for transient failures, which leaves the ID
+    uncached so the next run picks it up again.
+    """
     if not api_key:
         log.warning("No API key — skipping geocoding")
         return None
@@ -72,6 +80,15 @@ def _lookup_place(place_id: str, api_key: str) -> dict | None:
             },
             timeout=10,
         )
+        if resp.status_code == 404:
+            log.warning(f"Place ID {place_id} is no longer valid — caching as unresolvable")
+            return {
+                "place_id": place_id,
+                "place_name": None,
+                "formatted_address": None,
+                "lat": None,
+                "lng": None,
+            }
         resp.raise_for_status()
         data = resp.json()
         loc = data.get("location", {})
@@ -125,6 +142,7 @@ def geocode_new_places() -> int:
     api_key = _get_api_key()
 
     geocoded = 0
+    tombstoned = 0
     with contextlib.closing(_trino(catalog="iceberg")) as conn:
         cur = conn.cursor()
         for place_id in place_ids:
@@ -132,13 +150,19 @@ def geocode_new_places() -> int:
             if info:
                 try:
                     _insert_place(cur, info)
-                    geocoded += 1
+                    if info["place_name"] is None:
+                        tombstoned += 1
+                    else:
+                        geocoded += 1
                     log.info(f"  {place_id} → {info.get('place_name')}")
                 except Exception as e:
                     log.error(f"  Insert failed for {place_id}: {e}")
             time.sleep(SLEEP_BETWEEN_REQUESTS_S)
 
-    log.info(f"Done: {geocoded}/{len(place_ids)} places cached.")
+    log.info(
+        f"Done: {geocoded}/{len(place_ids)} places cached "
+        f"({tombstoned} unresolvable, cached to stop retrying)."
+    )
     return geocoded
 
 
