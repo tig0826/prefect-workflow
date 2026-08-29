@@ -103,15 +103,38 @@ final_slots AS (
     SELECT * FROM observed_winners
     UNION ALL
     SELECT * FROM unobserved_slots
+),
+
+-- 「移動していたか」は帯の勝者ラベルとは独立に持つ。
+-- 帯グラフは1スロット1ラベルなので priority 勝負にすると、移動中に
+-- スマホを触った瞬間に移動の帯が途切れる。移動は画面の使い方と排他ではない
+-- （移動しながら音楽を聴いても移動は続いている）ので、UI が連続した
+-- 移動レイヤーを描けるようフラグとして出す。
+--
+-- ★対象は TRANSIT だけ。OUTING（外出先滞在）を含めてはいけない★
+-- 滞在まで含めると実家に数日帰省した期間が丸ごと「移動」の下線で
+-- 埋まってしまう。動いていた時間だけが移動である。
+transit_context AS (
+    SELECT
+        time_slot_jst,
+        SUM(sub_overlap_sec) AS transit_sec,
+        MAX(cat_sub) AS transit_sub
+    FROM sub_aggregated
+    WHERE cat_main = 'TRANSIT'
+    GROUP BY time_slot_jst
 )
 
 SELECT
-    CAST(time_slot_jst AS timestamp) AS time_slot_jst,
-    CAST(time_slot_end_jst AS timestamp) AS time_slot_end_jst,
-    CAST(time_slot_jst AS date) AS slot_date_jst,
-    cat_main,
-    cat_sub,
-    overlap_sec,
+    CAST(f.time_slot_jst AS timestamp) AS time_slot_jst,
+    CAST(f.time_slot_end_jst AS timestamp) AS time_slot_end_jst,
+    CAST(f.time_slot_jst AS date) AS slot_date_jst,
+    f.cat_main,
+    f.cat_sub,
+    f.overlap_sec,
+    -- 60秒未満のかすりは移動扱いしない（スロット境界のノイズ除去）
+    COALESCE(tc.transit_sec, 0) >= 60 AS is_transit,
+    CASE WHEN COALESCE(tc.transit_sec, 0) >= 60 THEN tc.transit_sub END AS transit_kind,
     CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp) AS transformed_at_jst
-FROM final_slots
-WHERE time_slot_jst < CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp)
+FROM final_slots f
+LEFT JOIN transit_context tc ON tc.time_slot_jst = f.time_slot_jst
+WHERE f.time_slot_jst < CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS timestamp)

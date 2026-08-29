@@ -125,6 +125,43 @@ stays が伸びないが**これは正常**（外出が記録されていない�
 なお `owntracks_*` / `location_stays_silver` は 2026-05-06 で停止しており、
 **現在どのマートからも参照されていない**（OwnTracks 系は実質廃止）。
 
+### 移動は「滞在」と混ぜない・Google のモードを信じない
+`int_timeline_outing` は `cat_main` を2つに分ける。混ぜると
+**実家に数日帰省した期間が丸ごと「移動」に見える**。
+
+| cat_main | 中身 | priority | 帯グラフでの扱い |
+|---|---|---|---|
+| `TRANSIT` | 実際に移動していた時間 | 85 | 帯を奪う。移動中に音楽を聴いても「移動」と出す |
+| `OUTING` | 自宅以外での滞在 | 20 | あらゆる活動に譲る。滞在中は何をしていたかが見えないと思い出せない |
+
+`activity_type` の値は `WALKING` / `IN_TRAIN` / `IN_BUS` / `IN_PASSENGER_VEHICLE` /
+`IN_SUBWAY` / `IN_TRAM` / `IN_FERRY`。**`IN_VEHICLE` と `ON_BICYCLE` は存在しない**
+（旧実装がこの2つで絞っていたため移動が0件になっていた）。
+
+`WALKING` をそのまま信じてはいけない。GPS の屋内微動を Google が徒歩と解釈するため、
+実測で **最大 8,547分 / 移動距離 105m** のセグメントがあった（240件中75件・計14,974分）。
+自宅座標での判定は引っ越し・外泊で壊れるので採らず、セグメント自身の性質で切る:
+`distance_meters > 300` かつ `1.0 <= 速度 <= 300 km/h` かつ `所要 <= 360分`。
+残した時間は Fitbit 歩数と **r=0.814**（2026-08, n=28）で一致する。
+GPS が粗く1回の外出が複数に割れるため、**15分未満のギャップは同一移動として連結**する
+（実測の同日内ギャップは中央値12分、116件中61件が15分未満）。
+
+帯グラフは1スロット1ラベルなので、移動の連続性は
+`mrt_behavior_slots_15m.is_transit` / `transit_kind` として**勝者ラベルとは独立に**出し、
+UI が別レイヤー（下線）で描く。このフラグに `OUTING` を含めてはいけない。
+
+### ダッシュボードのイメージは必ず linux/amd64 でビルドする
+Mac (arm64) で `docker build` すると arm64 イメージが `latest` に上書きされ、
+ノード（amd64）で `exec format error` になり **CrashLoopBackOff で本番が落ちる**。
+`latest` タグを潰しているのでロールバックも効かない。必ず:
+
+```bash
+docker buildx build --platform linux/amd64 -t tig0826/life-dashboard-ui:latest --push .
+```
+
+Prefect 側は `prefect.yaml` に `platform: linux/amd64` があるので `prefect deploy` は安全。
+UI だけが手動ビルドで、ここだけガードが無い。
+
 ## 🔎 分析時の注意
 
 - **`mrt_ai_activity_hourly` を source 横断で合算しない**（同じ行動が二重に数えられる）。
