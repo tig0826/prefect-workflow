@@ -58,6 +58,7 @@ classified AS (
             WHEN domain LIKE '%.mynet' OR domain = 'localhost' THEN 'DEVELOP'
 
             -- 資格試験の過去問道場（ap-siken.com / nw-siken.com / sc-siken.com …）
+            -- cat_sub は既存の '学習' に寄せる（udemy と同じ扱い）
             WHEN domain LIKE '%siken.com' THEN 'DEVELOP'
 
             -- 学習・技術情報
@@ -99,7 +100,6 @@ sub AS (
         CASE
             WHEN cat_main = 'AD' THEN '広告・計測'
             WHEN cat_main = 'DEVELOP' AND (domain LIKE '%.mynet' OR domain = 'localhost') THEN '個人開発(自宅インフラ)'
-            WHEN cat_main = 'DEVELOP' AND domain LIKE '%siken.com' THEN '資格勉強'
             WHEN cat_main = 'DEVELOP' THEN '学習'
             WHEN cat_main = 'MANGA' THEN '漫画(Web)'
             WHEN cat_main = 'MEDIA' THEN '動画(Web)'

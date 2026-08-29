@@ -164,7 +164,7 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%udemy%' OR LOWER(raw_window_title) LIKE '%udemy%' THEN '学習'
             WHEN LOWER(raw_window_title) LIKE '%siken.com%'
               OR raw_window_title LIKE '%過去問道場%'
-              OR raw_window_title LIKE '%技術者試験.com%' THEN '資格勉強'
+              OR raw_window_title LIKE '%技術者試験.com%' THEN '学習'
             WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'Kindle'
             WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'コミュニティ'
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
