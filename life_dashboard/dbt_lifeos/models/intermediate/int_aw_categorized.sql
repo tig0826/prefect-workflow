@@ -75,6 +75,14 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%udemy%' OR LOWER(raw_window_title) LIKE '%udemy%' THEN 'DEVELOP'
+            -- 資格試験の過去問道場（*-siken.com）。ブラウザで開くため
+            -- 総称の chrome→BROWSING ルールより前に判定する必要がある。
+            -- ドメインが取れるのは Chrome 拡張だけで、PC のウィンドウタイトルには
+            -- 「応用情報技術者試験過去問道場 第10問｜応用情報技術者試験.com」の形で
+            -- 入るので両方拾う（実測 954件 / 375分がネットサーフィンに落ちていた）。
+            WHEN LOWER(raw_window_title) LIKE '%siken.com%'
+              OR raw_window_title LIKE '%過去問道場%'
+              OR raw_window_title LIKE '%技術者試験.com%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'READING'
             -- ★.mynet の総称ルールより前に置くこと★
             -- 自作の Life Dashboard は開発対象ではなく既に実用しているツールなので、
@@ -154,6 +162,9 @@ categorized AS (
               OR LOWER(raw_app_name) LIKE '%localhost%' OR LOWER(raw_window_title) LIKE '%localhost%' THEN '個人開発(自宅インフラ)'
             WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'qiita'
             WHEN LOWER(raw_app_name) LIKE '%udemy%' OR LOWER(raw_window_title) LIKE '%udemy%' THEN '学習'
+            WHEN LOWER(raw_window_title) LIKE '%siken.com%'
+              OR raw_window_title LIKE '%過去問道場%'
+              OR raw_window_title LIKE '%技術者試験.com%' THEN '資格勉強'
             WHEN LOWER(raw_app_name) LIKE '%kindle%' OR LOWER(raw_window_title) LIKE '%kindle%' THEN 'Kindle'
             WHEN LOWER(raw_app_name) LIKE '%slack%' OR LOWER(raw_app_name) LIKE '%discord%' THEN 'コミュニティ'
             WHEN LOWER(raw_app_name) LIKE '%x.com%' OR LOWER(raw_window_title) LIKE '%x.com%'
