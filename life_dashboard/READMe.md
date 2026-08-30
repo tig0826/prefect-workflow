@@ -191,3 +191,13 @@ UI だけが手動ビルドで、ここだけガードが無い。
   `dev_score` はアプリ前面時間ベースで、AIペアプロの待ち時間も計上される。
 - **音楽は娯楽と分ける**。`cat_main='MUSIC'`（YouTube Music / Spotify / Amazon Music）は
   作業BGMなので、ダッシュボードの Leisure（`ENT_CATS = MEDIA/MANGA/GAME/SOCIAL`）から除外している。
+
+### mrt_behavior_slots_15m に --full-refresh を打つ前に確認する
+`bounds` / `time_spine` の窓が全期間を覆っているか。以前は `bounds` が
+`is_incremental()` の外で14日固定だったため、**full-refresh すると
+直近14日だけ作り直して数ヶ月分の履歴を捨てていた**（ダッシュボードの過去日が
+全部空になる）。修正済みだが、この構造のモデルは他にもあり得る。
+
+またスパインを1本の `sequence()` で作らない。Trino の上限は1万件で、
+15分刻みは1日96件なので **104日で頭打ち**になり full-refresh が
+`INVALID_FUNCTION_ARGUMENT` で落ちる。日付 × 日内96オフセットの2段にする。
