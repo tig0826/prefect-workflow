@@ -9,18 +9,39 @@
 
 {% set reprocess_days = var('reprocess_days', 14) %}
 
+-- ★full-refresh で履歴を消さないこと★
+-- bounds は is_incremental() の外にあるため、以前は full-refresh でも
+-- 直近 reprocess_days 日ぶんの time_spine しか作らず、それ以前の
+-- スロットを丸ごと捨てていた（ダッシュボードの過去日が空になる）。
+-- incremental のときだけ窓を絞り、full-refresh のときは
+-- 上流イベントの最古の日から作り直す。
 WITH bounds AS (
     SELECT
+        {% if is_incremental() %}
         CAST(date_add('day', -{{ reprocess_days }}, date_trunc('day', current_timestamp AT TIME ZONE 'Asia/Tokyo')) AS timestamp) AS window_start_local,
+        {% else %}
+        (SELECT CAST(date_trunc('day', MIN(start_ts)) AS timestamp) FROM {{ ref('int_all_behavior_events') }}) AS window_start_local,
+        {% endif %}
         CAST(date_add('day', 1, date_trunc('day', current_timestamp AT TIME ZONE 'Asia/Tokyo')) AS timestamp) AS window_end_local
 ),
 
+-- ★1本の sequence で15分刻みを作らないこと★
+-- Trino の sequence() は1万件上限。15分刻みは1日96件なので104日で頭打ちになり、
+-- full-refresh（履歴全期間 = 141日 = 13,536件）が
+-- INVALID_FUNCTION_ARGUMENT で落ちる。日付×日内96スロットの2段に分ける。
 time_spine AS (
     SELECT
-        slot_start_local AS time_slot_jst,
-        (slot_start_local + INTERVAL '15' MINUTE) AS time_slot_end_jst
+        (d.day_local + o.offset_min * INTERVAL '1' MINUTE) AS time_slot_jst,
+        (d.day_local + o.offset_min * INTERVAL '1' MINUTE + INTERVAL '15' MINUTE) AS time_slot_end_jst
     FROM bounds b
-    CROSS JOIN UNNEST(sequence(b.window_start_local, b.window_end_local - INTERVAL '15' MINUTE, INTERVAL '15' MINUTE)) AS t(slot_start_local)
+    CROSS JOIN UNNEST(sequence(
+        CAST(date_trunc('day', b.window_start_local) AS timestamp),
+        CAST(date_trunc('day', b.window_end_local - INTERVAL '15' MINUTE) AS timestamp),
+        INTERVAL '1' DAY
+    )) AS d(day_local)
+    CROSS JOIN UNNEST(sequence(0, 1425, 15)) AS o(offset_min)
+    WHERE (d.day_local + o.offset_min * INTERVAL '1' MINUTE) >= b.window_start_local
+      AND (d.day_local + o.offset_min * INTERVAL '1' MINUTE) <  b.window_end_local
 ),
 
 events AS (
