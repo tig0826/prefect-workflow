@@ -206,6 +206,126 @@ deduplicated AS (
     SELECT *,
         ROW_NUMBER() OVER (PARTITION BY event_pk ORDER BY start_ts) AS rn
     FROM categorized
+),
+
+-- ─────────────────────────────────────────────────────────────
+-- DEVELOP を「個人開発(DEVELOP)」と「勉強(STUDY)」に分ける
+--
+-- ★なぜ必要か★
+-- 資格勉強と個人開発がどちらも DEVELOP で、開発への逃避が勉強の頑張りとして
+-- 表示されていた。本人の言葉:「資格の勉強が全然進んでいないことを相談したいのに、
+-- 開発に逃避しているがカテゴリが同じせいですごく頑張っている判定されちゃってる」
+--
+-- ★アプリ名だけでは原理的に分けられない★
+-- 実測（30日・DEVELOP 48.7h）: Ghostty 15.6h は確実に開発、
+-- Udemy と 技術者試験.com は確実に勉強。しかし Gemini 15.7h と Notion 5.8h が
+-- 両用途で、これが最大の塊。勉強のやり方が「本や過去問を解きながら Notion に
+-- ノートを取り、気になった部分を Gemini に解説させる」なので、
+-- Gemini 主体の時間は勉強でもある。
+-- さらに **signal の意味が時期で変わっている**（以前は Gemini をほぼ開発に使っていた）。
+-- 静的なアプリ名ルールでは解けない。
+--
+-- ★採った方法: ブロック単位の昇格★
+-- 勉強と開発はまとまった時間で行われるので、連続ブロックを単位にする。
+-- ベースは「勉強」。ブロック内のコーディング系が DEVELOP 時間の 20% 以上なら、
+-- そのブロックの曖昧な時間を全部「開発」に上げる。
+--
+-- しきい値の実測:
+--   10% → 開発 28.0h / 勉強 20.7h   ターミナルを少し触った勉強が開発に流れる
+--   20% → 開発 25.0h / 勉強 23.7h   ← 採用
+--   50% → 開発 14.4h / 勉強 34.4h   Ghostty 中心の開発が勉強に残る
+--
+-- ★判別不能カテゴリは作らない★（本人の要望: 正確に測れないとモニタリングにならない）
+-- 代わりに確定しているものは常に確定させ、曖昧なものだけブロックに従わせる。
+--
+-- ★空白 15分 で区切る理由★
+-- AW の欠測より長く、作業の中断として妥当。長くすると1ブロックが数時間になり
+-- 1ラベルで塗るのが無理になる（実測で 5.7h のブロックが出て、その中に
+-- コーディングも過去問も混在していた）。
+-- ─────────────────────────────────────────────────────────────
+-- ★窓関数を2段に分ける★
+-- SUM(... LAG() OVER ...) OVER () は Trino で
+-- 「Cannot nest window functions」エラーになる（dbt compile では通るが実行で落ちる）。
+--
+-- ★端末ごとに区切る（PARTITION BY raw_hostname）★
+-- 端末をまたいで1本の時系列にすると、Mac・スマホ・Windows のイベントが
+-- 交互に並んで空白が埋まり、ブロックが繋がり続ける。
+-- 実測: 端末を混ぜると 74ブロックが平均199分・最大825分（13.7時間）になり、
+-- 1ラベルで塗る意味が失われていた。端末ごとなら平均26分に収まる。
+dev_gap AS (
+    SELECT *,
+        CASE
+            WHEN LAG(end_ts) OVER (PARTITION BY raw_hostname ORDER BY start_ts) IS NULL THEN 1
+            WHEN date_diff('minute',
+                     LAG(end_ts) OVER (PARTITION BY raw_hostname ORDER BY start_ts),
+                     start_ts) > 15 THEN 1
+            ELSE 0
+        END AS is_new_block
+    FROM deduplicated
+    WHERE rn = 1 AND is_afk = false
+),
+dev_block AS (
+    SELECT *,
+        raw_hostname || '#' || CAST(
+            SUM(is_new_block) OVER (PARTITION BY raw_hostname ORDER BY start_ts) AS VARCHAR
+        ) AS block_id
+    FROM dev_gap
+),
+dev_block_ratio AS (
+    SELECT block_id,
+        SUM(IF(cat_main = 'DEVELOP', date_diff('second', start_ts, end_ts), 0)) AS develop_sec,
+        SUM(IF(LOWER(raw_app_name) LIKE '%ghostty%'
+                OR LOWER(raw_app_name) LIKE '%vscode%'
+                OR LOWER(raw_app_name) LIKE '%cursor%'
+                OR LOWER(raw_app_name) LIKE '%iterm%'
+                OR LOWER(raw_app_name) LIKE '%terminal%',
+               date_diff('second', start_ts, end_ts), 0)) AS coding_sec
+    FROM dev_block
+    GROUP BY block_id
+),
+-- ★dev_kind 列ではなく cat_main を分ける理由★
+-- 本人の判断:「学習と個人開発系は別物として分けましょう」「タイムライン表示は分けたい」。
+-- 別物として扱うなら別カテゴリにするのが素直で、色・優先度・スコアがそのまま付く。
+-- 派生列(dev_kind)にすると、cat_main='DEVELOP' で絞る既存コードが勉強を巻き込み続け、
+-- 「同じ事実の出どころが2つ」になる。
+kinded AS (
+    SELECT d.event_pk, d.event_date_jst, d.source_system, d.source_detail,
+        d.start_ts, d.end_ts, d.is_afk, d.raw_app_name, d.raw_window_title,
+        d.raw_usage_type, d.raw_hostname,
+        -- ★cat_sub も実態に合わせる★
+        -- cat_main だけ STUDY にすると cat_sub が「個人開発(AIペアプロ)」のまま残り、
+        -- 「STUDY / 個人開発(AIペアプロ)」という矛盾した組み合わせが表示される。
+        -- Gemini/ChatGPT/Notion は用途で名前が変わるので、判定結果に合わせて付け替える。
+        CASE
+            WHEN d.cat_main <> 'DEVELOP' THEN d.cat_sub
+            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)', '学習', 'qiita')
+                THEN d.cat_sub
+            -- 曖昧なもの（AIペアプロ / notion）はブロック判定に従って名前も変える
+            WHEN r.develop_sec > 0
+                 AND CAST(r.coding_sec AS DOUBLE) / r.develop_sec >= 0.20
+                THEN CASE WHEN d.cat_sub = 'notion' THEN '個人開発(notion)'
+                          ELSE '個人開発(AIペアプロ)' END
+            ELSE CASE WHEN d.cat_sub = 'notion' THEN '学習(ノート)'
+                      ELSE '学習(AI質問)' END
+        END AS cat_sub,
+        CASE
+            WHEN d.cat_main <> 'DEVELOP' THEN d.cat_main
+            -- 確定しているものはブロックに関係なく確定させる
+            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)') THEN 'DEVELOP'
+            WHEN d.cat_sub IN ('学習', 'qiita') THEN 'STUDY'
+            -- 曖昧なもの（AIペアプロ = Gemini/ChatGPT、notion）だけブロックに従う
+            WHEN r.develop_sec > 0
+                 AND CAST(r.coding_sec AS DOUBLE) / r.develop_sec >= 0.20 THEN 'DEVELOP'
+            ELSE 'STUDY'
+        END AS cat_main
+    FROM deduplicated d
+    -- AFK を含む全行に dev_kind を付ける必要があるので、
+    -- ブロック判定（AFK 除外）とは LEFT JOIN で結ぶ
+    LEFT JOIN dev_block b
+           ON d.event_pk = b.event_pk
+    LEFT JOIN dev_block_ratio r
+           ON b.block_id = r.block_id
+    WHERE d.rn = 1
 )
 
 SELECT
@@ -225,6 +345,9 @@ SELECT
     CASE
         WHEN cat_main = 'WORK' THEN 50
         WHEN cat_main = 'DEVELOP' THEN 50
+        -- 勉強は開発と同じ優先度。どちらも「意図して集中している時間」なので
+        -- 15分スロットで娯楽に負けてはいけない。
+        WHEN cat_main = 'STUDY' THEN 50
         WHEN cat_main = 'SOCIAL' THEN 40
         WHEN raw_usage_type = 'gaming' AND cat_sub = 'ゲーム' THEN 55
         WHEN cat_main = 'MUSIC' THEN 20
@@ -232,5 +355,4 @@ SELECT
         WHEN cat_main = 'LIFE' THEN 30
         ELSE 25
     END AS priority
-FROM deduplicated
-WHERE rn = 1
+FROM kinded
