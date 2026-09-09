@@ -33,7 +33,7 @@ definitions:
     job_variables:
       image: "{{ prefect.variables.life_image_name }}"
       env:
-        PREFECT_LOGGING_EXTRA_LOGGERS: "fitbit_exporter,asken_exporter,aw_exporter,geocode_places"
+        PREFECT_LOGGING_EXTRA_LOGGERS: "fitbit_exporter,google_health_exporter,asken_exporter,aw_exporter,geocode_places"
 
 # the deployments section allows you to provide configuration for deploying flows
 deployments:
@@ -57,6 +57,41 @@ deployments:
       - cron: "*/15 * * * *"
         timezone: "Asia/Tokyo"
     parameters: {}
+    enforce_parameter_schema: true
+
+  # Fitbit の後継。レガシー Fitbit Web API は 2026年9月に停止する（月内の
+  # 正確な日付は Google 未公表）。体重・体脂肪は 2026-08-31 を最後に
+  # 既に配信が止まっていた。停止日が読めないので life_bronze_fitbit と
+  # しばらく並行稼働させ、切れる瞬間に穴を空けない。
+  - name: life_bronze_google_health
+    tags: *common_tags
+    entrypoint: google_health_exporter/google_health_flow.py:google_health_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 15分ごと（fitbit と同じ鮮度。直近2日だけを浅く引く）
+      - cron: "*/15 * * * *"
+        timezone: "Asia/Tokyo"
+    parameters:
+      lookback_days: 2
+    enforce_parameter_schema: true
+
+  # 遡って引き直す専用の枠。
+  # fitbit_flow は対象日が「昨日と今日」だけで、後から入った値やその時だけ
+  # 失敗した日が永久に欠けたままになる（実例: 2026-08-23 の体重は今 API を
+  # 叩けば取れるのに bronze は null）。silver の14日自己修復は bronze が
+  # 更新されない限り効かないため、bronze 自体を毎日引き直す枠を分ける。
+  # 15分ごとの浅い取得と分けているのは、毎回14日分を引くのが無駄なだけで
+  # 意味がないから。
+  - name: life_bronze_google_health_backfill
+    tags: *common_tags
+    entrypoint: google_health_exporter/google_health_flow.py:google_health_flow
+    work_pool: *common_work_pool
+    schedules:
+      # 1日1回、朝の静かな時間に14日分
+      - cron: "10 4 * * *"
+        timezone: "Asia/Tokyo"
+    parameters:
+      lookback_days: 14
     enforce_parameter_schema: true
 
   - name: life_bronze_aw
