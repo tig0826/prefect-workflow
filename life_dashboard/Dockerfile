@@ -35,6 +35,7 @@ COPY --from=builder --chown=prefectuser:prefectgroup /app/.venv /app/.venv
 COPY --chown=prefectuser:prefectgroup ./common /opt/prefect/common
 COPY --chown=prefectuser:prefectgroup ./asken_exporter/ /opt/prefect/asken_exporter
 COPY --chown=prefectuser:prefectgroup ./fitbit_exporter/ /opt/prefect/fitbit_exporter
+COPY --chown=prefectuser:prefectgroup ./google_health_exporter/ /opt/prefect/google_health_exporter
 COPY --chown=prefectuser:prefectgroup ./aw_exporter/ /opt/prefect/aw_exporter
 COPY --chown=prefectuser:prefectgroup ./dbt_lifeos/ /opt/prefect/dbt_lifeos
 COPY --chown=prefectuser:prefectgroup ./ai_feedback/ /opt/prefect/ai_feedback
