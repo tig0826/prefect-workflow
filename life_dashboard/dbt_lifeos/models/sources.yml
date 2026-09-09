@@ -18,6 +18,9 @@ sources:
       - name: aw_android_web_chrome_external
       - name: asken_external
       - name: fitbit_external
+      # 2026-09-09 追加。レガシー Fitbit Web API が今月停止するのに伴う移行先。
+      # 体重・体脂肪はそれより先に配信が止まっていた（最後の実測 2026-08-31）。
+      - name: google_health_external
       - name: timeline_external
 
   - name: iceberg_life_gold

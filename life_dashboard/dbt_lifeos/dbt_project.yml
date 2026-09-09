@@ -38,3 +38,10 @@ models:
       +materialized: incremental
     gold:
       +schema: gold
+
+vars:
+  # BMI は Google Health API に無いので体重と身長から自前で計算する。
+  # 既存データ（Fitbit が返していた weight と bmi の組）から逆算すると
+  # 全レコードで 1.660m に一致した。個人情報なのでモデルに直書きせず
+  # ここに置き、必要なら実行時に --vars で上書きする。
+  height_m: 1.660

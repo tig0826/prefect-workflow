@@ -11,6 +11,9 @@ WITH base AS (
     SELECT
         CAST(event_date_jst AS DATE) AS target_date,
         cat_main, raw_app_name, is_afk,
+        -- スコアの分類軸。int_aw_categorized が DEVELOP を
+        -- DEVELOP（個人開発）と STUDY（勉強）に分けているのでそのまま使う。
+        CASE WHEN cat_main = 'DEVELOP' THEN 'DEV' ELSE cat_main END AS score_kind,
         CAST(start_ts AS TIMESTAMP(3)) AS start_ts,
         CAST(end_ts AS TIMESTAMP(3)) AS end_ts,
         date_diff('second', CAST(start_ts AS TIMESTAMP(3)), CAST(end_ts AS TIMESTAMP(3))) AS duration_sec
@@ -25,12 +28,12 @@ WITH base AS (
 ),
 core_events AS (
     SELECT * FROM base
-    WHERE cat_main IN ('WORK', 'DEVELOP') 
+    WHERE cat_main IN ('WORK', 'DEVELOP', 'STUDY') 
       AND is_afk = false
       AND duration_sec > 5
 ),
 lagged AS (
-    SELECT *, LAG(end_ts) OVER(PARTITION BY target_date, cat_main ORDER BY start_ts) AS prev_end_ts
+    SELECT *, LAG(end_ts) OVER(PARTITION BY target_date, score_kind ORDER BY start_ts) AS prev_end_ts
     FROM core_events
 ),
 session_flags AS (
@@ -43,48 +46,51 @@ session_flags AS (
     FROM lagged
 ),
 session_assigned AS (
-    SELECT *, SUM(is_new_session) OVER(PARTITION BY target_date, cat_main ORDER BY start_ts) AS session_id
+    SELECT *, SUM(is_new_session) OVER(PARTITION BY target_date, score_kind ORDER BY start_ts) AS session_id
     FROM session_flags
 ),
 session_boundaries AS (
-    SELECT target_date, cat_main, session_id,
+    SELECT target_date, score_kind, session_id,
         MIN(start_ts) AS session_start, MAX(end_ts) AS session_end,
         date_diff('second', MIN(start_ts), MAX(end_ts)) AS session_duration_sec
     FROM session_assigned
-    GROUP BY target_date, cat_main, session_id
+    GROUP BY target_date, score_kind, session_id
 ),
 daily_stats AS (
     SELECT target_date,
-        SUM(IF(cat_main = 'WORK', session_duration_sec, 0)) AS work_session_sec,
-        SUM(IF(cat_main = 'DEVELOP', session_duration_sec, 0)) AS dev_session_sec
+        SUM(IF(score_kind = 'WORK', session_duration_sec, 0)) AS work_session_sec,
+        SUM(IF(score_kind = 'DEV', session_duration_sec, 0)) AS dev_session_sec,
+        SUM(IF(score_kind = 'STUDY', session_duration_sec, 0)) AS study_session_sec
     FROM session_boundaries
     GROUP BY target_date
 ),
 core_stats AS (
     SELECT target_date,
-        SUM(IF(cat_main = 'WORK', duration_sec, 0)) AS work_core_sec,
-        SUM(IF(cat_main = 'DEVELOP', duration_sec, 0)) AS dev_core_sec
+        SUM(IF(score_kind = 'WORK', duration_sec, 0)) AS work_core_sec,
+        SUM(IF(score_kind = 'DEV', duration_sec, 0)) AS dev_core_sec,
+        SUM(IF(score_kind = 'STUDY', duration_sec, 0)) AS study_core_sec
     FROM core_events
     GROUP BY target_date
 ),
 app_usage_agg AS (
-    SELECT target_date, cat_main, raw_app_name, SUM(duration_sec) AS app_duration_sec
+    SELECT target_date, score_kind, raw_app_name, SUM(duration_sec) AS app_duration_sec
     FROM core_events
-    GROUP BY target_date, cat_main, raw_app_name
+    GROUP BY target_date, score_kind, raw_app_name
 ),
 app_usage_ranked AS (
-    SELECT target_date, cat_main, raw_app_name, app_duration_sec,
-        row_number() OVER(PARTITION BY target_date, cat_main ORDER BY app_duration_sec DESC) as rn
+    SELECT target_date, score_kind, raw_app_name, app_duration_sec,
+        row_number() OVER(PARTITION BY target_date, score_kind ORDER BY app_duration_sec DESC) as rn
     FROM app_usage_agg
 ),
 app_usage_pivot AS (
     SELECT target_date,
-        MAX(IF(cat_main = 'WORK', apps_str)) AS work_apps_str,
-        MAX(IF(cat_main = 'DEVELOP', apps_str)) AS dev_apps_str
+        MAX(IF(score_kind = 'WORK', apps_str)) AS work_apps_str,
+        MAX(IF(score_kind = 'DEV', apps_str)) AS dev_apps_str,
+        MAX(IF(score_kind = 'STUDY', apps_str)) AS study_apps_str
     FROM (
-        SELECT target_date, cat_main,
+        SELECT target_date, score_kind,
             ARRAY_JOIN(ARRAY_AGG(raw_app_name || ':' || CAST(app_duration_sec AS VARCHAR) ORDER BY app_duration_sec DESC), '||') AS apps_str
-        FROM app_usage_ranked WHERE rn <= 10 GROUP BY target_date, cat_main
+        FROM app_usage_ranked WHERE rn <= 10 GROUP BY target_date, score_kind
     )
     GROUP BY target_date
 ),
@@ -95,8 +101,11 @@ joined_stats AS (
         COALESCE(d.work_session_sec, 0) AS work_session_sec,
         COALESCE(c.dev_core_sec, 0) AS dev_core_sec,
         COALESCE(d.dev_session_sec, 0) AS dev_session_sec,
+        COALESCE(c.study_core_sec, 0) AS study_core_sec,
+        COALESCE(d.study_session_sec, 0) AS study_session_sec,
         COALESCE(a.work_apps_str, '') AS work_apps_str,
-        COALESCE(a.dev_apps_str, '') AS dev_apps_str
+        COALESCE(a.dev_apps_str, '') AS dev_apps_str,
+        COALESCE(a.study_apps_str, '') AS study_apps_str
     FROM core_stats c
     LEFT JOIN daily_stats d ON c.target_date = d.target_date
     LEFT JOIN app_usage_pivot a ON c.target_date = a.target_date
@@ -107,9 +116,12 @@ scored AS (
         -- 集中度(%)の計算
         IF(work_session_sec > 0, ROUND(CAST(work_core_sec AS DOUBLE) / work_session_sec * 100), 0) AS work_focus_rate,
         IF(dev_session_sec > 0, ROUND(CAST(dev_core_sec AS DOUBLE) / dev_session_sec * 100), 0) AS dev_focus_rate,
+        IF(study_session_sec > 0, ROUND(CAST(study_core_sec AS DOUBLE) / study_session_sec * 100), 0) AS study_focus_rate,
         -- ベーススコア (Workは8時間=28800秒, Devは4時間=14400秒を分母にする)
         CAST(work_core_sec AS DOUBLE) / 28800 * 100 AS work_base_score,
-        CAST(dev_core_sec AS DOUBLE) / 14400 * 100 AS dev_base_score
+        CAST(dev_core_sec AS DOUBLE) / 14400 * 100 AS dev_base_score,
+        -- 勉強の分母は開発と同じ4時間。本人の判断:「4時間もやれば十分過ぎる」
+        CAST(study_core_sec AS DOUBLE) / 14400 * 100 AS study_base_score
     FROM joined_stats
 )
 -- 最終結合とボーナス倍率の適用（最大120点でキャップ）
@@ -130,5 +142,13 @@ SELECT
         WHEN dev_focus_rate >= 40 THEN 1.0
         WHEN dev_focus_rate >= 30 THEN 0.5
         ELSE 0.1 END), 120) AS INTEGER) AS dev_score,
-    dev_apps_str
+    dev_apps_str,
+    study_core_sec, study_session_sec, CAST(study_focus_rate AS INTEGER) AS study_focus_rate,
+    CAST(LEAST(ROUND(study_base_score * CASE
+        WHEN study_focus_rate >= 70 THEN 1.2
+        WHEN study_focus_rate >= 60 THEN 1.1
+        WHEN study_focus_rate >= 40 THEN 1.0
+        WHEN study_focus_rate >= 30 THEN 0.5
+        ELSE 0.1 END), 120) AS INTEGER) AS study_score,
+    study_apps_str
 FROM scored
