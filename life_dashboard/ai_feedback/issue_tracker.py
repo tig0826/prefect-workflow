@@ -21,6 +21,7 @@ import re
 import uuid
 from zoneinfo import ZoneInfo
 
+from ai_feedback import github_tickets as gt
 from common.trino_api import TrinoAPI
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -30,8 +31,16 @@ TRINO = TrinoAPI(host="trino.mynet", port=80, user="tig", catalog="iceberg")
 # 4 は「1週間弱ずっと同じことを言い続けたら諦める」という意味。
 MENTION_LIMIT_BEFORE_ABANDON = 4
 
+# 目標を何日連続で満たしたら仮説の検証を完了とみなすか。
+# 1日でも満たせば卒業にすると、ノイズで上振れした日に誤って外れる。
+GRADUATION_DAYS = 5
+
 # metric が「動いた」と見なす最小変化率。測定ノイズを改善と誤読しないため。
 MIN_MEANINGFUL_CHANGE_PCT = 10.0
+
+# 介入を打ってから、効果を判定してよくなるまでの最低日数。
+# 昨日打った手を今日の数字で否定するのは不公平なので待つ。
+MIN_INTERVENTION_DAYS = 7
 
 
 def _q(v) -> str:
@@ -79,31 +88,102 @@ def _records(df) -> list[dict]:
 # 読み取り
 # ─────────────────────────────────────────────────────────────
 def load_active_issues() -> list[dict]:
-    """open / testing の issue を返す（古い順）。"""
-    df = TRINO.execute_query("""
-        SELECT issue_id, CAST(opened_date AS VARCHAR) AS opened_date, title, hypothesis,
-               discovered_by, evidence, metric_sql, metric_name, metric_unit,
-               baseline_value, target_value, target_direction, status,
-               mention_count, CAST(last_mentioned_date AS VARCHAR) AS last_mentioned_date, notes
-        FROM iceberg.life_gold.ai_feedback_issues
-        WHERE status IN ('open', 'testing')
-        ORDER BY opened_date
-    """)
-    return _records(df)
+    """検証中の仮説を GitHub から読む。
+
+    ★2026-09-03: 出どころを Trino から GitHub に移した★
+    課題管理は GitHub の Issue が正になった。本人が仮説と指標の定義を読めて
+    直せる必要があるため（「今の所あなたが課題とか色々言ってるのが何もわからない」）。
+    Trino に残すのは ai_metric_history（時系列）だけ。
+
+    issue_id は GitHub の issue 番号（例 "13"）。旧 "ISS-xxx" 形式は使わない。
+    """
+    rows = []
+    for h in gt.load_active_hypotheses():
+        rows.append(
+            {
+                "issue_id": str(h["number"]),
+                "title": h["title"],
+                "hypothesis": h["body"],
+                "status": h["status"],
+                "metric_name": h["metric_name"],
+                "metric_unit": h["metric_unit"],
+                "metric_sql": h["metric_sql"],
+                "baseline_value": h["baseline_value"],
+                "target_value": h["target_value"],
+                "target_direction": h["target_direction"],
+                "mention_count": h["mention_count"],
+                "parent": h.get("parent"),
+            }
+        )
+    return rows
+
+
+def load_problems() -> list[dict]:
+    """実在する課題（severity 付き）。**仮説とは別物。**
+
+    日次FBはこれを見て「何が重いか」を判断する。
+    以前はこの層が存在せず、仮説を課題として扱っていたため、
+    仮説が反証されると課題まで閉じていた。
+    """
+    return gt.load_problems()
 
 
 def load_interventions(limit_days: int = 90) -> list[dict]:
-    """直近の介入履歴。週次の前後比較の基準日になる。"""
-    df = TRINO.execute_query(f"""
-        SELECT intervention_id, issue_id,
-               CAST(started_at AS VARCHAR) AS started_at,
-               CAST(ended_at AS VARCHAR) AS ended_at,
-               kind, description, config_ref, created_by
-        FROM iceberg.life_gold.ai_interventions
-        WHERE started_at >= date_add('day', -{limit_days}, current_timestamp)
-        ORDER BY started_at DESC
-    """)
-    return _records(df)
+    """直近の「打った手」（life:action）。週次の前後比較の基準日になる。
+
+    ★2026-09-03: 出どころを Trino から GitHub に移した★
+    打った手は life:action として GitHub にあり、
+    「効いたかの確かめ方」や検証結果がコメントに書かれている。
+    Trino の ai_interventions を併用すると出どころが2つになるので使わない。
+    """
+    rows = gt._call(f"/repos/{gt.REPO}/issues?labels=life:action&state=all&per_page=100")
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=limit_days)
+    out = []
+    for a in rows or []:
+        if a.get("pull_request"):
+            continue
+        started = datetime.datetime.fromisoformat(a["created_at"].replace("Z", "+00:00"))
+        if started < cutoff:
+            continue
+        out.append(
+            {
+                "intervention_id": f"#{a['number']}",
+                "issue_id": None,
+                "started_at": a["created_at"],
+                "ended_at": a.get("closed_at"),
+                "kind": gt._label_value(a, "kind:") or "",
+                "description": a["title"].replace("[打った手] ", ""),
+                "created_by": "github",
+            }
+        )
+    return sorted(out, key=lambda x: x["started_at"], reverse=True)
+
+
+def interventions_for_issue(issue_id: str) -> list[dict]:
+    """その仮説に対して実際に打たれた手を GitHub から返す。
+
+    ★これが無いと「未検証」と「反証」を区別できない★
+    metric が動かない理由は3つある:
+      1. 仮説が間違っている
+      2. 仮説は正しいが、有効な介入を打っていない
+      3. 介入は打ったが守られていない
+    介入の有無を見ずに棄却すると、3つ全部を「1」と判定してしまう。
+    実測で、旧実装が棄却した2件はどちらも介入0件だった。
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    out = []
+    for a in gt.load_actions_for(int(issue_id)):
+        started = datetime.datetime.fromisoformat(a["created_at"].replace("Z", "+00:00"))
+        out.append(
+            {
+                "intervention_id": f"#{a['number']}",
+                "kind": a["kind"],
+                "description": a["title"],
+                "started_at": a["created_at"],
+                "days_since_start": (now - started).days,
+            }
+        )
+    return out
 
 
 def metric_history(issue_id: str, days: int = 28) -> list[dict]:
@@ -217,11 +297,17 @@ def create_issue(title: str, hypothesis: str, discovered_by: str, evidence: dict
                  metric_sql: str, metric_name: str, metric_unit: str,
                  baseline_value: float, target_value: float, target_direction: str,
                  opened_date: str | None = None, status: str = "open",
-                 notes: str | None = None) -> str:
-    """新しい issue を立てる。metric_sql が空なら例外（処方の必須条件）。
+                 notes: str | None = None, parent_number: int | None = None) -> str:
+    """新しい仮説を GitHub に起票する。metric_sql が空なら例外。
 
     ここで metric を強制することが「浅いアドバイス」を機械的に殺す仕掛け。
     「十分な睡眠を」「無理は禁物」は metric_sql を書けないので通らない。
+
+    ★2026-09-03: 起票先を GitHub に変えた★
+    指標の定義は本文の <!-- metric --> と ```sql ブロックに入る。
+    本人が読んで直せることが要件なので、Trino のカラムに埋めない。
+
+    返すのは GitHub の issue 番号（文字列）。
     """
     if not metric_sql or not metric_sql.strip():
         raise ValueError(
@@ -231,10 +317,10 @@ def create_issue(title: str, hypothesis: str, discovered_by: str, evidence: dict
     if target_direction not in ("decrease", "increase"):
         raise ValueError(f"target_direction は decrease / increase のみ: {target_direction!r}")
 
-    # mrt_ai_activity_hourly を source 横断で合算する metric を拒否する。
+    # mrt_ai_activity_hourly を source 横断で集計する metric を拒否する。
     # 同じ行動が window / media / web に重複して立つため二重計上になる。
     # 実際に週次FBの LLM が `source IN ('window','web')` で書き、0-4時の画面時間を
-    # 258.4分/日 と報告した（正しくは 222.9分/日）。プロンプトの警告だけでは防げなかった。
+    # 258.4分/日 と報告した（正しくは 222.9分/日）。プロンプトの警告では防げなかった。
     low = metric_sql.lower()
     if "mrt_ai_activity_hourly" in low and re.search(r"\b(sum|avg)\s*\(\s*(seconds|minutes)\b", low):
         if not re.search(r"source\s*=\s*'", low):
@@ -245,99 +331,340 @@ def create_issue(title: str, hypothesis: str, discovered_by: str, evidence: dict
                 "（分単位で重複排除済み）。"
             )
 
-    issue_id = f"ISS-{uuid.uuid4().hex[:8].upper()}"
-    opened = opened_date or datetime.datetime.now(JST).strftime("%Y-%m-%d")
-    TRINO.execute_action(f"""
-        INSERT INTO iceberg.life_gold.ai_feedback_issues
-          (issue_id, opened_date, title, hypothesis, discovered_by, evidence,
-           metric_sql, metric_name, metric_unit, baseline_value, target_value,
-           target_direction, status, mention_count, last_mentioned_date,
-           resolved_date, notes, created_at, updated_at)
-        VALUES ({_q(issue_id)}, DATE {_q(opened)}, {_q(title)}, {_q(hypothesis)},
-                {_q(discovered_by)}, {_q(json.dumps(evidence, ensure_ascii=False))},
-                {_q(metric_sql)}, {_q(metric_name)}, {_q(metric_unit)},
-                {_q(baseline_value)}, {_q(target_value)}, {_q(target_direction)},
-                {_q(status)}, 0, NULL, NULL, {_q(notes)},
-                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    """)
-    return issue_id
+    body = f"""## 仮説
+{hypothesis}
+
+## 支持するデータ
+{json.dumps(evidence, ensure_ascii=False, indent=2)}
+
+<!-- metric
+name: {metric_name}
+unit: {metric_unit}
+baseline: {baseline_value}
+target: {target_value}
+direction: {target_direction}
+mention_count: 0
+-->
+
+## 検証指標
+
+| | 値 |
+|---|---|
+| 指標名 | {metric_name} |
+| 単位 | {metric_unit} |
+| baseline | {baseline_value} |
+| 目標 | {target_value} |
+| 方向 | {target_direction} |
+
+```sql
+{metric_sql.strip()}
+```
+
+<sub>この SQL が日次フローで実行され、結果が `ai_metric_history` に積まれます。
+**測り方が違うと思ったら SQL を直してください。** `<!-- metric -->` の
+baseline / target / direction も同時に直すこと（機械が読むのはそちら）。</sub>
+"""
+    if notes:
+        body += f"\n## 補足\n{notes}\n"
+
+    labels = ["life:hypothesis", f"status:{status}"]
+    by = {
+        "weekly_llm": "by:weekly-llm",
+        "chat": "by:chat",
+        "manual": "by:manual",
+    }.get(discovered_by, "by:structural")
+    labels.append(by)
+
+    created = gt._call(
+        f"/repos/{gt.REPO}/issues",
+        "POST",
+        {"title": title, "body": body, "labels": labels},
+    )
+    number = created["number"]
+
+    if parent_number:
+        try:
+            gt._call(
+                f"/repos/{gt.REPO}/issues/{parent_number}/sub_issues",
+                "POST",
+                {"sub_issue_id": created["id"]},
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 親 #{parent_number} への紐付けに失敗: {e}")
+
+    del opened_date  # GitHub の created_at が起票日
+    return str(number)
 
 
 def bump_mention(issue_id: str, mentioned_date: str) -> None:
-    """言及回数を1つ増やす。同じ日に二重に増やさない。"""
-    TRINO.execute_action(f"""
-        UPDATE iceberg.life_gold.ai_feedback_issues
-        SET mention_count = mention_count + 1,
-            last_mentioned_date = DATE {_q(mentioned_date)},
-            updated_at = CURRENT_TIMESTAMP
-        WHERE issue_id = {_q(issue_id)}
-          AND (last_mentioned_date IS NULL OR last_mentioned_date < DATE {_q(mentioned_date)})
-    """)
+    """言及回数を1つ増やす（GitHub の本文の metric ブロックに持つ）。
+
+    ★カウンタだけ Trino に残さない★
+    課題管理を GitHub に一本化した以上、カウンタを別の場所に置くと
+    「同じ情報の出どころが2つ」に戻る。実際にその構図で
+    「間違った方を読む」事故を2回起こしている。
+    """
+    del mentioned_date  # GitHub 側は最終言及日を timeline が持つので不要
+    gt.bump_mention(int(issue_id))
 
 
 def set_status(issue_id: str, status: str, note: str | None = None) -> None:
-    resolved = "CURRENT_DATE" if status in ("resolved", "abandoned", "rejected") else "NULL"
-    note_sql = (
-        f"notes = CONCAT(COALESCE(notes, ''), {_q(chr(10) + str(note))})" if note else "notes = notes"
-    )
-    TRINO.execute_action(f"""
-        UPDATE iceberg.life_gold.ai_feedback_issues
-        SET status = {_q(status)},
-            resolved_date = {resolved},
-            {note_sql},
-            updated_at = CURRENT_TIMESTAMP
-        WHERE issue_id = {_q(issue_id)}
-    """)
+    """仮説の status ラベルを張り替え、理由をコメントで残す。
+
+    ★親の課題は閉じない★
+    仮説が反証されても、課題（life:problem）は実在するので生き続ける。
+    以前は1行に事実と推測が同居していて、推測の反証で事実まで閉じていた。
+    """
+    gt.set_status_label(int(issue_id), status, note)
 
 
 def record_intervention(description: str, kind: str, issue_id: str | None = None,
                         config_ref: str | None = None, created_by: str = "weekly_llm",
                         started_at: str | None = None, notes: str | None = None) -> str:
-    intervention_id = f"INT-{uuid.uuid4().hex[:8].upper()}"
-    start = started_at or datetime.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
-    TRINO.execute_action(f"""
-        INSERT INTO iceberg.life_gold.ai_interventions
-          (intervention_id, issue_id, started_at, ended_at, kind, description,
-           config_ref, created_by, notes, created_at)
-        VALUES ({_q(intervention_id)}, {_q(issue_id)}, TIMESTAMP {_q(start)}, NULL,
-                {_q(kind)}, {_q(description)}, {_q(config_ref)}, {_q(created_by)},
-                {_q(notes)}, CURRENT_TIMESTAMP)
-    """)
-    return intervention_id
+    """打った手を GitHub に life:action として起票する。
+
+    ★2026-09-03: 書き込み先を Trino から GitHub に移した★
+    打った手は仮説の子チケットになる。
+    親（issue_id = 仮説の issue 番号）を必ず指定すること。
+    親のない介入は「どの仮説に対して打ったのか不明」という意味で、
+    効果測定のときに交絡要因として扱われる。
+
+    ★started_at は「実際に効き始めた時刻」を書く★
+    commit 時刻を使わない。実例: AGH v3 は 8/27 10:45 開始だが
+    commit は 8/29 18:21 で2日ずれる。commit 日で期間を切ると前後比較がずれる。
+    """
+    body = f"""## 打った手
+{description}
+
+## 種別
+`{kind}`
+
+| | 値 |
+|---|---|
+| 開始 | {started_at or datetime.datetime.now(JST).strftime('%Y-%m-%d %H:%M')} |
+| 終了 | 継続中 |
+"""
+    if config_ref:
+        body += f"\n**設定の由来**: `{config_ref}`\n"
+    if notes:
+        body += f"\n## 補足\n{notes}\n"
+    if issue_id:
+        body += f"\n対象の仮説: #{issue_id}\n"
+    else:
+        body += (
+            "\n> **対象の仮説が未設定です。** どの仮説に対して打った手なのかが不明で、"
+            "効果測定のときに交絡要因として扱われます。\n"
+        )
+
+    created = gt._call(
+        f"/repos/{gt.REPO}/issues",
+        "POST",
+        {
+            "title": f"[打った手] {description[:70]}",
+            "body": body,
+            "labels": ["life:action", f"kind:{kind}"],
+        },
+    )
+    if issue_id:
+        try:
+            gt._call(
+                f"/repos/{gt.REPO}/issues/{issue_id}/sub_issues",
+                "POST",
+                {"sub_issue_id": created["id"]},
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"⚠️ 仮説 #{issue_id} への紐付けに失敗: {e}")
+    return f"#{created['number']}"
 
 
-# ─────────────────────────────────────────────────────────────
-# 仮説の棄却
-# ─────────────────────────────────────────────────────────────
 def enforce_abandonment(evaluated: list[dict]) -> list[dict]:
-    """言及回数が上限を超え、かつ metric が動いていない issue を abandoned にする。
+    """言及回数が上限を超え、かつ metric が動いていない issue を仕分ける。
 
     これが「毎日同じことを言い続ける」を構造的に不可能にする本体。
-    棄却された issue は次回から active に出てこないので、FB は別の仮説を
-    立てざるを得なくなる。
+
+    ★2026-09-02 の修正: 「未検証」を「反証」として扱っていた★
+    旧実装は「言及4回 + metric が動かない」だけで abandoned にしていた。
+    しかし **mention_count は言及回数であって検証回数ではない。**
+    実測で、棄却された2件（ISS-891764E7 / ISS-001）はどちらも
+    **介入が一度も打たれていなかった**（ai_interventions に0件）。
+    誰も動かそうとしていない指標が動かなかったことを理由に、
+    仮説が「外れた」と記録されていた。ISS-001 は自分の仮説文に
+    「介入すべきは深夜側」と書いたまま、深夜側に何も打たずに死んだ。
+
+    放置すると「実際には検証していないのに検証済みとして残る」誤った知識が溜まる。
+    そこで判定を2つに分ける:
+
+      介入あり + 十分な期間経過 + 動かない → abandoned（本当の反証）
+      介入なし                             → untested（未検証。試す価値は残っている）
+
+    untested は active から外れるので繰り返しは止まるが、abandoned とは意味が違う。
+    後から介入が紐づけば revive_untested() で testing に戻る。
+
+    ★遵守率（adherence）について★
+    ai_metric_history.adherence_pct は設計されているが 127行すべて NULL で、
+    配線されていない。介入ごとに測り方が違うため汎用の計算ができない
+    （dns_block なら「窓内に通過したクエリ数」で測れるが、AGH のクエリログが
+    まだ Iceberg に入っていない）。よって現時点では「介入が存在し、
+    MIN_INTERVENTION_DAYS 以上経過している」までを条件とする。
+    遵守率が取れるようになったら、ここに条件を足す。
     """
-    abandoned = []
+    result = []
     for e in evaluated:
         if e.get("status") != "open":
             continue
         if (e.get("mention_count") or 0) < MENTION_LIMIT_BEFORE_ABANDON:
             continue
-        # 評価できていない（データ欠損）ものは棄却しない。欠損は無効果ではない。
+        # 評価できていない（データ欠損）ものは仕分けない。欠損は無効果ではない。
         if e.get("current_value") is None:
             continue
         if e.get("is_moving"):
             continue
+
+        acted = [
+            v
+            for v in interventions_for_issue(e["issue_id"])
+            if (v.get("days_since_start") or 0) >= MIN_INTERVENTION_DAYS
+        ]
+
+        if not acted:
+            all_iv = interventions_for_issue(e["issue_id"])
+            if all_iv:
+                # 介入はあるが日が浅い。まだ判定しない。
+                print(f"⏳ {e['issue_id']}: 介入から{max(v.get('days_since_start') or 0 for v in all_iv)}日。判定を保留")
+                continue
+            reason = (
+                f"[auto] {e['mention_count']}回言及したが、この課題に対する介入が"
+                f"一度も打たれていない（ai_interventions に0件）。"
+                f"metric「{e.get('metric_name')}」が動かないのは当然なので、"
+                f"仮説の反証ではなく**未検証**として扱う。"
+                f"試す価値は残っているが、繰り返しを止めるため active から外す。"
+                f"介入を打って紐付ければ revive_untested() で復帰する。"
+            )
+            set_status(e["issue_id"], "untested", reason)
+            e["status"] = "untested"
+            e["untested_reason"] = reason
+            print(f"🧪 untested {e['issue_id']}: {e.get('title')}（介入0件）")
+            result.append(e)
+            continue
+
+        applied = "; ".join(
+            f"{v['intervention_id']}({v['kind']}, {str(v['started_at'])[:10]}〜)" for v in acted
+        )
         reason = (
-            f"[auto] {e['mention_count']}回言及したが metric「{e.get('metric_name')}」が "
+            f"[auto] {e['mention_count']}回言及し、介入も打った上で "
+            f"metric「{e.get('metric_name')}」が "
             f"baseline {e.get('baseline_value')} → {e.get('current_value')} "
             f"({e.get('change_from_baseline_pct')}%) で有意に動かなかったため仮説を棄却。"
+            f"打った介入: {applied}"
         )
         set_status(e["issue_id"], "abandoned", reason)
         e["status"] = "abandoned"
         e["abandon_reason"] = reason
-        abandoned.append(e)
         print(f"🪦 abandoned {e['issue_id']}: {e.get('title')}")
-    return abandoned
+        result.append(e)
+    return result
+
+
+def enforce_graduation(evaluated: list[dict]) -> list[dict]:
+    """目標を達成し続けている仮説を verifying に上げ、日次の実況から外す。
+
+    ★これが無いと成功に出口が無い★
+    enforce_abandonment は `is_moving` を素通りさせるので、効いている仮説は
+    永久に open のまま毎朝実況され続ける。実測（2026-09-11）では #7
+    「漫画アプリへの勤務中の逃避」が18日中13日 FB に登場していた。
+    達成すればするほど死ななくなる構造になっていた。
+
+    ★閉じずに verifying に上げる理由★
+    仮説の metric を達成しても、それは**打った手が効いた**ことしか示さない。
+    #7 の親は #21「娯楽への逃避が、介入を重ねても総量として減らない」であり、
+    漫画が減っても逃避の総量が減っていなければ課題は解決していない
+    （逃避先が移っただけの可能性がある）。
+    したがって達成時に問いを切り替える:
+        「漫画は減ったか」→「親の課題は動いたか」
+    親が動けば solved、動かなければ仮説自体が誤りなので新しい仮説へ。
+    その判断は本人と weekly に委ねるので、ここでは閉じない。
+    """
+    graduated = []
+    for e in evaluated:
+        if e.get("status") not in ("open", "testing"):
+            continue
+        target = e.get("target_value")
+        direction = e.get("target_direction")
+        if target is None or direction not in ("decrease", "increase"):
+            continue
+
+        # 履歴の末尾から連続で目標を満たしている日数を数える。
+        # 単日の達成で卒業させると、ノイズで上振れした日に誤って外れる。
+        hist = [h for h in (e.get("history") or []) if h.get("v") is not None]
+        streak = 0
+        for h in reversed(hist):
+            ok = h["v"] <= target if direction == "decrease" else h["v"] >= target
+            if not ok:
+                break
+            streak += 1
+        if streak < GRADUATION_DAYS:
+            continue
+
+        note = (
+            f"[auto] metric「{e.get('metric_name')}」が目標 {target} を "
+            f"{streak}日連続で満たしたため、この仮説の検証は完了とみなす。"
+            f"baseline {e.get('baseline_value')} → 現在 {e.get('current_value')}。\n\n"
+            f"**打った手が効いたことは示されたが、親の課題が解決したとは限らない。**"
+            f"以後の問いは「この指標が下がったか」ではなく"
+            f"「親の課題が動いたか」に切り替える。"
+            f"親が動いていなければ、効果が別の行動に移っただけの可能性があるので、"
+            f"この仮説は棄却して新しい仮説を立てること。"
+        )
+        set_status(e["issue_id"], "verifying", note)
+        e["status"] = "verifying"
+        e["graduation_note"] = note
+        e["graduation_streak"] = streak
+        print(f"🎓 verifying {e['issue_id']}: {e.get('title')}（{streak}日連続で目標達成）")
+        graduated.append(e)
+    return graduated
+
+
+def revive_untested() -> list[dict]:
+    """untested の仮説に「打った手」が紐づいたら testing に戻す。
+
+    untested を墓場にしないための対。
+    「試す価値はあるが試していない」状態から、介入を打った瞬間に検証中へ復帰させる。
+    復帰時に baseline を測り直すのが要点で、これをしないと介入前の古い baseline と
+    比較して効果を誤判定する。
+    """
+    revived = []
+    rows = gt._call(
+        f"/repos/{gt.REPO}/issues?labels=life:hypothesis&state=open&per_page=100"
+    )
+    for i in rows or []:
+        if gt._label_value(i, "status:") != "untested":
+            continue
+        actions = gt.load_actions_for(i["number"])
+        if not actions:
+            continue
+        metric = gt.parse_metric(i.get("body") or "")
+        if not metric:
+            continue
+
+        eval_date = datetime.datetime.now(JST).strftime("%Y-%m-%d")
+        value, error = evaluate_metric(metric, eval_date)
+        if value is None:
+            print(f"⚠️ #{i['number']}: 復帰したいが metric が評価できない（{error}）")
+            continue
+
+        first = min(a["created_at"] for a in actions)[:10]
+        gt.set_baseline(
+            i["number"],
+            value,
+            f"[auto] 打った手が紐づいたため untested → testing に復帰。"
+            f"baseline を現時点の実測値 {value} に打ち直した（最初の介入: {first}）。"
+            f"介入前の baseline と比べると、介入前の変動を効果として誤読するため。",
+        )
+        gt.set_status_label(i["number"], "testing")
+        record_metric(str(i["number"]), eval_date, value, None, None)
+        print(f"♻️ revived #{i['number']}: {i['title']} (baseline={value})")
+        revived.append({"issue_id": str(i["number"]), "title": i["title"]})
+    return revived
 
 
 # ─────────────────────────────────────────────────────────────

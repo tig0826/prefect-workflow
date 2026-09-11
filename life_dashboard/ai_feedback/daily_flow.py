@@ -468,6 +468,157 @@ def detect_mode(ctx: dict) -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────
+# 多様性のための材料づくり
+#
+# ★プロンプトに例を書かない★
+# 「解錠回数など」と例示したら、18日中11日が解錠の話になった。
+# モデルは例示に強く引っ張られるので、何を話題にするかは
+# ここでデータから計算して渡し、プロンプト側は枠だけを示す。
+# ─────────────────────────────────────────────────────────────
+
+# 話題の領域。**中身の例ではなく枠の名前だけ**を持つ。
+_DOMAINS = {
+    "睡眠": ("睡眠", "入眠", "就寝", "起床", "仮眠", "昼寝", "覚醒", "レム", "深睡眠"),
+    "体組成・栄養": ("体重", "体脂肪", "BMI", "タンパク質", "食事", "摂取", "カロリー",
+                     "栄養", "塩分", "食物繊維", "糖質", "脂質"),
+    "活動量": ("歩数", "運動", "活動", "座位", "心拍", "消費"),
+    "仕事・学習": ("業務", "仕事", "作業", "開発", "勉強", "学習", "資格", "集中"),
+    "画面・スマホ": ("解錠", "スマホ", "画面", "YouTube", "動画", "漫画", "ゲーム",
+                     "ネットサーフィン", "ブラウジング"),
+    "身体症状": ("痛み", "胸焼け", "咳", "痰", "動悸", "ふらつき", "むくみ", "頭皮", "腹痛"),
+}
+
+
+def fetch_recent_feedback(day_date: str, days: int = 5) -> list[dict]:
+    """直近の自分の発言を読み直すために過去FBを引く。
+
+    ★旧 flow から引き継がれていなかった★
+    ai_feedback_flow は recent_feedback_history を組み立てていたが、
+    daily_flow が使う fetch_context の経路では None のままだった。
+    そのためモデルは自分が昨日何を言ったかを知らずに書いていて、
+    「繰り返すな」と指示しても判断材料が無い状態だった。
+    """
+    df = TRINO.execute_query(f"""
+        SELECT CAST(feedback_date AS VARCHAR) AS d, messages
+        FROM iceberg.life_gold.ai_feedback
+        WHERE feedback_date BETWEEN DATE '{day_date}' - INTERVAL '{days}' DAY
+                               AND DATE '{day_date}'
+        ORDER BY feedback_date DESC
+    """)
+    if df.empty:
+        return []
+    out = []
+    for r in it._records(df):
+        try:
+            out.append({"date": r["d"], "messages": json.loads(r["messages"])})
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return out
+
+
+def pick_under_covered(ctx: dict) -> list[str]:
+    """直近の FB で触れていない領域を返す。"""
+    blob = json.dumps(ctx.get("recent_feedback_history") or [], ensure_ascii=False)
+    covered = {d for d, kws in _DOMAINS.items() if any(k in blob for k in kws)}
+    return [d for d in _DOMAINS if d not in covered]
+
+
+def fetch_metric_deviations(day_date: str) -> list[dict]:
+    """直近3日が過去28日の分布から外れている指標を拾う。
+
+    知識ベースの指摘（「タンパク質が不足している」等）の起点にする。
+    **どの指標を話題にすべきかをここで決め、意味づけだけをモデルに任せる。**
+    こちらで「タンパク質」と名指しした例をプロンプトに書くと、
+    毎日タンパク質の話になるため、指標名は固定しない。
+    """
+    df = TRINO.execute_query(f"""
+        WITH d AS (
+            SELECT f.target_date,
+                   CAST(f.steps AS DOUBLE) AS steps,
+                   CAST(f.total_minutes_asleep AS DOUBLE) AS sleep_min,
+                   CAST(f.resting_heart_rate AS DOUBLE) AS resting_hr,
+                   f.weight_kg,
+                   f.calories_in, a.protein_g, a.fiber_g, a.salt_g, a.carbs_g, a.fat_g
+            FROM iceberg.life_gold.mrt_fitness_daily_summary f
+            LEFT JOIN iceberg.life_gold.mrt_asken a ON a.target_date = f.target_date
+            WHERE f.target_date BETWEEN DATE '{day_date}' - INTERVAL '27' DAY
+                                    AND DATE '{day_date}'
+        )
+        SELECT * FROM d
+    """)
+    if df.empty:
+        return []
+    rows = it._records(df)
+    rows.sort(key=lambda r: str(r["target_date"]))
+    recent, base = rows[-3:], rows[:-3]
+    if len(base) < 10:
+        return []
+
+    out = []
+    for col in ("steps", "sleep_min", "resting_hr", "weight_kg",
+                "calories_in", "protein_g", "fiber_g", "salt_g", "carbs_g", "fat_g"):
+        rv = [float(r[col]) for r in recent if r.get(col) is not None]
+        bv = sorted(float(r[col]) for r in base if r.get(col) is not None)
+        if len(rv) < 2 or len(bv) < 10:
+            continue
+        med = bv[len(bv) // 2]
+        if med == 0:
+            continue
+        cur = sum(rv) / len(rv)
+        ratio = cur / med
+        # 中央値から2割以上外れているものだけを候補にする。
+        if 0.8 <= ratio <= 1.25:
+            continue
+        out.append({
+            "指標": col,
+            "直近3日平均": round(cur, 1),
+            "過去28日の中央値": round(med, 1),
+            "方向": "低下" if ratio < 1 else "上昇",
+            "n_recent": len(rv),
+        })
+    # 外れの大きい順に、多すぎると全部言及しようとするので絞る
+    out.sort(key=lambda x: abs(x["直近3日平均"] / x["過去28日の中央値"] - 1), reverse=True)
+    return out[:4]
+
+
+def build_review_candidates(problems: list[dict], active: list[dict]) -> list[dict]:
+    """「もう解決していないか」を本人に問い直す候補の課題を返す。
+
+    客観指標で自動クローズできない課題（身体症状・精神的な悩み）は、
+    本人の申告でしか閉じられない。放置すると永久に open のまま在庫になる。
+
+    ★「解決しましたか」とは聞かせない★
+    答えようがないので、関連する指標がどう変わったかを添えて渡す。
+    本人が記憶や気分ではなく事実を足場に答えられるようにする。
+    文面は書かない（書くと全部その文面になる）。
+    """
+    by_parent: dict[int, list[dict]] = {}
+    for a in active:
+        p = a.get("parent_problem")
+        if p:
+            by_parent.setdefault(int(p), []).append(a)
+
+    cands = []
+    for p in problems:
+        num = int(p["number"])
+        children = by_parent.get(num, [])
+        cands.append({
+            "number": num,
+            "title": p["title"],
+            "severity": p.get("severity"),
+            "仮説の数": len(children),
+            "関連指標の動き": [
+                {"metric": c.get("metric"), "baseline": c.get("baseline"),
+                 "current": c.get("current"), "history": (c.get("history") or [])[-7:]}
+                for c in children
+            ],
+        })
+    # 仮説が無い課題ほど「何も分かっていない」ので優先度が高い
+    cands.sort(key=lambda c: (c["仮説の数"], str(c.get("severity"))))
+    return cands[:5]
+
+
 @task(name="Build daily context")
 def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
     """2つの日付スコープを持つコンテキストを作る。
@@ -518,15 +669,45 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
     if detail:
         ctx.setdefault("today", {})["activity_detail"] = detail
 
+    # ★実在する課題（severity 付き）を FB に渡す★
+    # ここが無いと、日次FBは仮説しか見ず「何が重いか」を判断できない。
+    # 実害: 2026-09-01 の朝のFBが「深夜の全画面時間を減らす仮説は変化がなかったため
+    # 棄却しました」と報告した。実際は介入0件の未検証で、これは誤報だった。
+    problems = it.load_problems()
+    if problems:
+        ctx["problems"] = [
+            {
+                "number": p["number"],
+                "title": p["title"],
+                "severity": p["severity"],
+                "priority": p["priority"],
+                "status": p["status"],
+            }
+            for p in problems
+        ]
+
+    # untested の課題に介入が紐づいていたら testing に戻す。
+    # ★評価より先に走らせる★ 復帰時に baseline を打ち直すので、
+    # 同じ実行内で評価まで進めないと baseline と評価日がずれる。
+    it.revive_untested()
+
     # 進行中の課題と、その metric が実際にどう動いたか
     evaluated = it.evaluate_all_issues(eval_date)
-    abandoned = it.enforce_abandonment(evaluated)
+    # ★戻り値には abandoned と untested の両方が入る★
+    # 「反証された」と「一度も試していない」を混ぜて報告すると、
+    # 本人に誤った既知事項が伝わるので必ず分けて扱う。
+    triaged = it.enforce_abandonment(evaluated)
+    abandoned = [t for t in triaged if t["status"] == "abandoned"]
+    untested = [t for t in triaged if t["status"] == "untested"]
     ctx["active_issues"] = [
         {
             "issue_id": e["issue_id"],
             "title": e["title"],
             "hypothesis": e["hypothesis"],
             "status": e["status"],
+            # 親の課題。**仮説の metric 達成は課題の解決を意味しない**ので、
+            # どの課題にぶら下がっているかを見せないと取り違える。
+            "parent_problem": e.get("parent"),
             "metric": e["metric_name"],
             "unit": e["metric_unit"],
             "baseline": e["baseline_value"],
@@ -550,6 +731,14 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
             {"issue_id": a["issue_id"], "title": a["title"], "reason": a.get("abandon_reason")}
             for a in abandoned
         ]
+    if untested:
+        # 未検証として外したもの。**「外れた」ではなく「試していない」**。
+        # ここを取り違えて伝えると、検証していない仮説が「検証済み」として
+        # 本人の中に残ってしまう。
+        ctx["untested_today"] = [
+            {"issue_id": u["issue_id"], "title": u["title"], "reason": u.get("untested_reason")}
+            for u in untested
+        ]
 
     ctx["interventions"] = [
         {
@@ -560,6 +749,28 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
         }
         for v in it.load_interventions(limit_days=60)
     ]
+
+    # 目標を達成し続けている仮説を実況から外す。
+    # これが無いと、効いている仮説ほど永久に毎朝登場し続ける。
+    graduated = it.enforce_graduation(evaluated)
+    if graduated:
+        ctx["graduated_today"] = [
+            {"issue_id": g["issue_id"], "title": g["title"],
+             "metric": g.get("metric_name"), "streak": g.get("graduation_streak"),
+             "parent": g.get("parent")}
+            for g in graduated
+        ]
+        done = {g["issue_id"] for g in graduated}
+        ctx["active_issues"] = [a for a in ctx["active_issues"] if a["issue_id"] not in done]
+
+    # 同じ領域ばかり語らないための材料（詳細は pick_under_covered の説明を参照）
+    ctx["recent_feedback_history"] = fetch_recent_feedback(day_date)
+    ctx["under_covered_domains"] = pick_under_covered(ctx)
+    deviations = fetch_metric_deviations(day_date)
+    if deviations:
+        ctx["metric_deviations"] = deviations
+    if problems:
+        ctx["review_candidates"] = build_review_candidates(problems, ctx["active_issues"])
 
     ctx["mode"] = detect_mode(ctx)
     return ctx
@@ -675,7 +886,31 @@ Android のブラウザは前面イベントにタイトルが付かず（Firefo
 タイトル無し）、**何を見ていたか分からない**。
 BROWSING の増減を「逃避が増えた/減った」と解釈してはいけない。
 
-### 7. 禁止事項
+### 7. 新鮮さの原則（実験の実況以外に適用）
+
+`recent_feedback_history` に直近の過去FBが入っています。
+**実験の実況（構成1）を除き、そこで既に伝えた内容・角度を繰り返さないでください。**
+実況は継続性が価値なので繰り返して構いませんが、それ以外の枠で同じ話を
+別の言い方にしただけのものを出すのは、枠を1つ潰すのと同じです。
+
+`under_covered_domains` に、直近のFBで触れていない領域が入っています。
+**構成2以降は、ここにある領域を優先してください。**
+ただし、その領域のデータが薄い日に無理に絞り出す必要はありません。
+
+### 8. 知識に基づく指摘
+
+`metric_deviations` に、直近3日が過去28日の分布から外れている指標が入っています。
+本人のデータだけでは新しく言えることが無い日は、**これらを起点に、
+科学・医療・健康の一般知見で意味づけした指摘**を出してよいです。
+本人が自分のデータから読み取れない「それが何を意味するか」を補うのが目的です。
+
+守ること:
+- **一般知見であることを明示する。** 本人のデータから導いた結論のように書かない
+- **精密な数値を捏造しない。** 「平均23%低下する」のような具体的な数字は、
+  確実に言える場合を除いて書かないこと。方向と機序を述べるほうが誠実です
+- 診断をしない。医療機関の受診が要る話は、そう伝えるだけにとどめる
+
+### 9. 禁止事項
 - JSONキー名・変数名の出力
 - 数値の羅列
 - 存在しないデータへの言及（「〇〇のデータがありません」）
@@ -694,15 +929,45 @@ _MODE_OPTIMIZE = """\
    - `eval_error` がある → 評価できていない。**欠測を「改善」と読まないこと**
    - `history` があれば動きの方向（改善中/停滞/悪化）を見る
 
-2. **今日固有の事実（`already_obvious` にないもの）**
-   `activity_detail` の「睡眠と画面が重なった時間帯」、`phone_signals` の解錠回数など、
-   **本人が自分では数えられない数字**を優先してください。
+2. **今日固有の事実、または知識に基づく指摘（1件）**
+   **本人が自分では数えられない数字**を使ってください。
+   どの領域から採るかは `under_covered_domains` に従い、直近で触れていない領域を
+   優先します。材料が無ければ `metric_deviations` を起点に制約8の形で書いてください。
 
-3. **処方（最大1つ・省略可）**
+   ここで扱う領域は毎日変わるのが正常です。同じ領域が続いているなら、
+   それは材料が尽きている合図なので、別の領域に移ってください。
+
+3. **振り返りの問いかけ（最大1件・省略可）**
+   `review_candidates` は、客観指標だけでは解決したか判断できない課題です。
+   放置すると永久に open のまま残るので、本人に問い直す必要があります。
+
+   **「解決しましたか」と聞かないでください。** 答えようがありません。
+   関連指標がどう変わったかを先に示し、その上で今も困っているかを尋ねてください。
+   本人が記憶や気分ではなく、事実を足場に自分を客観視できる形にすることが目的です。
+
+   - 1回のFBで問いかけは**1件まで**。毎朝聞かれると答えられなくなります
+   - 同じ課題を続けて聞かない（`recent_feedback_history` を見て判断）
+   - 指標が動いていない課題を聞いても意味がありません。変化があるものを選ぶこと
+
+4. **処方（最大1つ・省略可）**
    制約2を満たせる場合のみ。満たせないなら書かないでください。
 
 `abandoned_today` があれば、その仮説を諦めたことを1文で伝えてください
 （同じことを言い続けないための機構が働いた、という報告です）。
+
+`problems` は**実在する課題**で、severity（S1が最も実害が近い）付きです。
+仮説とは別物で、**仮説が反証されても課題は生きています**。
+「何が重いか」はこの severity で判断してください。仮説の数や言及回数ではありません。
+
+`graduated_today` があれば、その仮説は metric の目標を連続で達成したので
+検証を完了し、日次の実況から外れました。**1文で卒業を伝えてください。**
+ただし**課題が解決したとは言わないこと。** 示されたのは「打った手が効いた」ことだけで、
+親の課題が動いたかは別の問題です。効果が別の行動に移っただけの可能性が残ります。
+以後の関心が親の課題に移ることを伝えてください。
+
+`untested_today` があれば、それは**外れた仮説ではなく、一度も試していない仮説**です。
+「効果がなかった」と言ってはいけません。「この筋は試す価値があるが、まだ何も打っていない」
+と伝え、可能なら具体的に何を打てばよいかを1つ添えてください。
 """
 
 _MODE_STABILIZE = """\
@@ -727,7 +992,8 @@ _MODE_STABILIZE = """\
 
 _OUTPUT_RULES = """\
 ## 出力ルール
-- 件数: 最適化モードは2〜3件、安定化モードは1〜2件
+- 件数: 最適化モードは3〜4件、安定化モードは1〜2件
+  （実況で1枠使うため、2件だと実況以外が1件しか残らない）
 - 1件 = 150文字以内
 - type: "positive" | "warning" | "danger" | "insight"
 - **`issue_ids`: そのメッセージで扱った `active_issues` の issue_id を配列で必ず入れる**
@@ -863,7 +1129,7 @@ def ai_feedback_daily_flow(target_date: str | None = None, force: bool = False):
         if iid in known
     })
     for issue_id in mentioned:
-        it.bump_mention(issue_id, day_date)
+        it.bump_mention(issue_id, day_date)  # GitHub 側は日付を timeline が持つ
     if mentioned:
         print(f"   mention_count を進めた issue: {mentioned}")
 
