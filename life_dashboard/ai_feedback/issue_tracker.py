@@ -128,6 +128,33 @@ def load_problems() -> list[dict]:
     return gt.load_problems()
 
 
+def load_unaddressed_problems() -> list[dict]:
+    """仮説が1件も紐付いていない課題（life:problem）。severity/priority順。
+
+    ★2026-09-12: 追加した理由★
+    週次分析は `load_active_issues`（仮説層）しか見ておらず、仮説が一度も
+    立っていない課題は週次LLMの視界に入っていなかった。実際に sev:S1/pri:P0
+    クラスの課題が起票から数週間、仮説ゼロで放置される実害が出た。
+
+    `gt.parent_map()` は「課題(open)→そのsub-issue全部」の対応表なので、
+    その値（＝何かしら子issueが紐付いている課題番号の集合）に入っていない
+    課題を「仮説ゼロ」とみなす。
+    """
+    problems = gt.load_problems()
+    covered = set(gt.parent_map().values())
+    return [
+        {
+            "number": p["number"],
+            "title": p["title"],
+            "severity": p["severity"],
+            "priority": p["priority"],
+            "body": (p["body"] or "")[:500],
+        }
+        for p in problems
+        if p["number"] not in covered
+    ]
+
+
 def load_interventions(limit_days: int = 90) -> list[dict]:
     """直近の「打った手」（life:action）。週次の前後比較の基準日になる。
 

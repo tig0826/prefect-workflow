@@ -338,6 +338,8 @@ def build_weekly_context(week_end: str) -> dict:
         # 平日/休日の比較。これまで一度も分けていなかった領域。
         "weekday_vs_weekend": fetch_daytype_comparison(week_end),
         "intervention_effects": fetch_intervention_effects(week_end),
+        # 仮説が1件も紐付いていない life:problem。週次LLMがここを最優先で見るための入力。
+        "unaddressed_problems": it.load_unaddressed_problems(),
         "active_issues": [
             {k: e[k] for k in (
                 "issue_id", "title", "hypothesis", "status", "metric_name",
@@ -474,11 +476,29 @@ BROWSING の増減を「逃避が増えた/減った」と解釈してはいけ�
   なぜそれが偶然でないかを述べること**
 - 記述統計を因果として書かない
 
-## 今週の実験（最重要・必ず1つだけ）
+## 仮説が無い課題（`unaddressed_problems`・最優先で見ること）
 
-分析の最後に、**今週試す実験を1つだけ**決めてください。
+`unaddressed_problems` には、**仮説が1件も紐付いていない `life:problem`** が
+severity/priority 順に並んでいます。課題だけ起票されて仮説が一度も立っていない
+＝ 放置されている課題です。今週の実験を選ぶときは、ここを最優先の候補プールとして
+扱ってください。特に severity が S1/S2、priority が P0/P1 のものを放置しないこと。
 
-必須条件:
+## 今週の実験（最大3件まで。数はノルマではない）
+
+分析の最後に、今週試す実験を **0〜3件** 決めてください。
+確信の持てる仮説が1つしか無ければ1つだけ、複数の切り口を試したいなら複数、
+`metric_sql` を書けるところまで詰め切れなければ **0件でよい**
+（その場合は下の「確認したいことがあるとき」に回すこと。無理に埋めない）。
+
+優先順位:
+1. **`unaddressed_problems` を最優先で埋める。** ここから選んだ実験には
+   `parent_problem_number` にその課題のissue番号を入れること
+   （課題の子として紐付けられ、`life:problem` → `life:hypothesis` の階層が保たれる）
+2. 次点で `active_issues` が停滞しているものに **別の角度**の仮説を足す
+   （同じ課題・同じ角度の言い換えは禁止。既存と重複しないこと）
+3. 上記のどちらにも確信が持てない週は、無理に3件埋めなくてよい
+
+必須条件（各実験ごとに）:
 - **`metric_sql` が書けること。** 既存テーブルのカラムと閾値で自動評価できない提案は
   出力してはいけません（「十分な睡眠を」「無理は禁物」は metric を書けないので却下）
 - `metric_sql` は **1行1列の数値** を返し、日付は `{{eval_date}}` プレースホルダで受ける
@@ -491,32 +511,44 @@ BROWSING の増減を「逃避が増えた/減った」と解釈してはいけ�
   cat_main / cat_sub の増減で述べれば十分で、移動先を名指しする必要はない
 - **症状ではなく原因に介入する。** 例: 主睡眠が短いから昼寝で補填している場合、
   昼寝を削ると総睡眠が減るだけで悪化する。手を入れるのは深夜側
-- 既存の `active_issues` と重複しないこと。既存のものが停滞しているなら、
-  同じ課題に**別の角度の仮説**を立てるのは可
+- 既存の `active_issues` と重複しないこと
+
+### 確信が持てないときは、実験ではなく「確認」にする
+
+`unaddressed_problems` について原因の仮説をいくつか思いついても、
+**どれが本命か決め手が無い**ことがあります。その場合、無理に1つへ絞って
+`metric_sql` を書いて登録するのではなく、**`insights` に `type: "question"` の
+項目を書いて本人に直接聞いてください。** 「〇〇については最近どうですか？
+△△の可能性を疑っていますが判断材料が足りません」のように、候補を1〜2個挙げて
+選ばせる・絞らせる具体的な質問にすること（「よく眠れていますか」のような
+曖昧な質問は禁止）。本人の返答はチャットでの会話に現れ、そこから仮説につながります。
 
 ## 出力形式（JSONのみ・他のテキスト一切不要）
 
 {{
   "insights": [
-    {{"type": "insight"|"warning"|"danger"|"positive",
-      "message": "200文字以内。数値の根拠を含める",
+    {{"type": "insight"|"warning"|"danger"|"positive"|"question",
+      "message": "200文字以内。数値の根拠を含める（questionは本人への具体的な質問文）",
       "issue_ids": ["関連する既存issue_id（無ければ空配列）"]}}
   ],
-  "experiment": {{
-    "title": "40文字以内",
-    "hypothesis": "原因の仮説。症状ではなく原因を書く",
-    "metric_sql": "SELECT ... WHERE ... {{eval_date}} ...",
-    "metric_name": "指標の名前",
-    "metric_unit": "分 / 回 / 時間 など",
-    "baseline_value": 数値,
-    "target_value": 数値,
-    "target_direction": "decrease"|"increase",
-    "why_not_chance": "なぜこれが偶然の発見でないか"
-  }},
+  "experiments": [
+    {{"title": "40文字以内",
+      "hypothesis": "原因の仮説。症状ではなく原因を書く",
+      "parent_problem_number": "unaddressed_problems 由来なら課題のissue番号（数値）。それ以外は null",
+      "metric_sql": "SELECT ... WHERE ... {{eval_date}} ...",
+      "metric_name": "指標の名前",
+      "metric_unit": "分 / 回 / 時間 など",
+      "baseline_value": 数値,
+      "target_value": 数値,
+      "target_direction": "decrease"|"increase",
+      "why_not_chance": "なぜこれが偶然の発見でないか"}}
+  ],
   "queries_run": ["実際に投げた主要なSQLを3〜5本"]
 }}
 
-insights は3〜5件。既に日次で伝えた内容（`recent_feedback`）の繰り返しは禁止です。
+insights は3〜5件（`type: "question"` を含めてよい）。
+既に日次で伝えた内容（`recent_feedback`）の繰り返しは禁止です。
+experiments は0〜3件。数はノルマではない。
 
 ## データ
 {data}
@@ -669,65 +701,91 @@ def run_critic(analysis: dict, api_key: str) -> dict:
         return {"missed": [], "next_week_targets": [], "error": str(e)[:200]}
 
 
-@task(name="Register weekly experiment")
-def register_experiment(exp: dict, week_end: str) -> str | None:
-    """今週の実験を issue として登録する。metric_sql を書けていなければ登録しない。"""
-    if not exp:
-        print("⚠️ experiment が空。今週の実験は登録しない")
-        return None
-    try:
-        issue_id = it.create_issue(
-            title=exp["title"],
-            hypothesis=exp["hypothesis"],
-            discovered_by="weekly_llm",
-            evidence={"why_not_chance": exp.get("why_not_chance")},
-            metric_sql=exp["metric_sql"],
-            metric_name=exp["metric_name"],
-            metric_unit=exp.get("metric_unit") or "",
-            baseline_value=float(exp["baseline_value"]),
-            target_value=float(exp["target_value"]),
-            target_direction=exp["target_direction"],
-            opened_date=week_end,
-            status="open",
-        )
-    except (KeyError, ValueError, TypeError) as e:
-        # metric_sql が無い・方向が不正などは「処方として不成立」なので登録しない。
-        # ここで弾くことが「検証できない助言」を機械的に排除する仕掛け。
-        print(f"❌ 今週の実験を登録できなかった（metric の条件を満たしていない）: {e}")
-        return None
+@task(name="Register weekly experiments")
+def register_experiments(exps: list[dict], week_end: str) -> list[str]:
+    """今週の実験を issue として登録する（0〜3件）。metric_sql を書けていない実験は登録しない。
 
-    # metric_sql が実際に動くかを登録直後に確かめる。動かない metric は
-    # 効果測定ループを黙って殺すので、ここで検出して notes に残す。
-    value, err = it.evaluate_metric({"metric_sql": exp["metric_sql"]}, week_end)
-    if err:
-        it.set_status(issue_id, "open", f"[warn] metric_sql の初回評価が失敗: {err}")
-        print(f"⚠️ {issue_id} の metric_sql が評価できない: {err}")
-        return issue_id
+    ★2026-09-12: 単数→複数に変更★
+    以前は「今週の実験は必ず1つだけ」だったが、13件の課題が仮説ゼロで放置される
+    という実害が出た（週1件ペースだと解消に何ヶ月もかかる）。本人の希望により、
+    ノルマではなく上限として複数（最大3件）を許すようにした。
+    """
+    issue_ids: list[str] = []
+    if not exps:
+        print("ℹ️ experiments が空。今週は無理に実験を登録しない")
+        return issue_ids
 
-    it.record_metric(issue_id, week_end, value)
-    print(f"✅ 今週の実験を登録: {issue_id} 「{exp['title']}」 metric初期値={value}")
+    for exp in exps:
+        if not exp:
+            continue
 
-    # LLM が申告した baseline と metric_sql の実測値がズレていないか照合する。
-    # ズレる典型は「baseline は7日平均で出したが metric_sql は単日を返す」という
-    # 集計基準の不一致で、この場合 progress が日々のノイズで誤読される。
-    # 実際に 2026-08-27 の初回生成で baseline=223.0（7日平均）に対し
-    # metric_sql が単日を返し 226.0 になっていた。
-    stated = float(exp["baseline_value"])
-    if value and abs(stated - value) / abs(value) > 0.10:
-        warn = (
-            f"[warn] 申告 baseline {stated} と metric_sql の実測 {value} が10%以上乖離。"
-            "集計基準（単日 / N日平均）が食い違っている可能性がある。"
-            f"baseline を実測値 {value} に置き換えた。"
-        )
-        it.TRINO.execute_action(f"""
-            UPDATE iceberg.life_gold.ai_feedback_issues
-            SET baseline_value = {value},
-                notes = COALESCE(notes, '') || {it._q(warn)},
-                updated_at = CURRENT_TIMESTAMP
-            WHERE issue_id = {it._q(issue_id)}
-        """)
-        print(f"⚠️ {warn}")
-    return issue_id
+        # unaddressed_problems 由来なら parent_problem_number が入っている。
+        # 数値化できなければ紐付け無し（トップレベルの仮説）として扱う。
+        parent_number = exp.get("parent_problem_number")
+        try:
+            parent_number = int(parent_number) if parent_number else None
+        except (TypeError, ValueError):
+            parent_number = None
+
+        try:
+            issue_id = it.create_issue(
+                title=exp["title"],
+                hypothesis=exp["hypothesis"],
+                discovered_by="weekly_llm",
+                evidence={"why_not_chance": exp.get("why_not_chance")},
+                metric_sql=exp["metric_sql"],
+                metric_name=exp["metric_name"],
+                metric_unit=exp.get("metric_unit") or "",
+                baseline_value=float(exp["baseline_value"]),
+                target_value=float(exp["target_value"]),
+                target_direction=exp["target_direction"],
+                opened_date=week_end,
+                status="open",
+                parent_number=parent_number,
+            )
+        except (KeyError, ValueError, TypeError) as e:
+            # metric_sql が無い・方向が不正などは「処方として不成立」なので登録しない。
+            # ここで弾くことが「検証できない助言」を機械的に排除する仕掛け。
+            print(f"❌ 実験を登録できなかった（metric の条件を満たしていない）: {e}")
+            continue
+
+        # metric_sql が実際に動くかを登録直後に確かめる。動かない metric は
+        # 効果測定ループを黙って殺すので、ここで検出して notes に残す。
+        value, err = it.evaluate_metric({"metric_sql": exp["metric_sql"]}, week_end)
+        if err:
+            it.set_status(issue_id, "open", f"[warn] metric_sql の初回評価が失敗: {err}")
+            print(f"⚠️ {issue_id} の metric_sql が評価できない: {err}")
+            issue_ids.append(issue_id)
+            continue
+
+        it.record_metric(issue_id, week_end, value)
+        parent_note = f"（親: #{parent_number}）" if parent_number else ""
+        print(f"✅ 今週の実験を登録: {issue_id}{parent_note} 「{exp['title']}」 metric初期値={value}")
+
+        # LLM が申告した baseline と metric_sql の実測値がズレていないか照合する。
+        # ズレる典型は「baseline は7日平均で出したが metric_sql は単日を返す」という
+        # 集計基準の不一致で、この場合 progress が日々のノイズで誤読される。
+        # 実際に 2026-08-27 の初回生成で baseline=223.0（7日平均）に対し
+        # metric_sql が単日を返し 226.0 になっていた。
+        stated = float(exp["baseline_value"])
+        if value and abs(stated - value) / abs(value) > 0.10:
+            warn = (
+                f"[warn] 申告 baseline {stated} と metric_sql の実測 {value} が10%以上乖離。"
+                "集計基準（単日 / N日平均）が食い違っている可能性がある。"
+                f"baseline を実測値 {value} に置き換えた。"
+            )
+            it.TRINO.execute_action(f"""
+                UPDATE iceberg.life_gold.ai_feedback_issues
+                SET baseline_value = {value},
+                    notes = COALESCE(notes, '') || {it._q(warn)},
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE issue_id = {it._q(issue_id)}
+            """)
+            print(f"⚠️ {warn}")
+
+        issue_ids.append(issue_id)
+
+    return issue_ids
 
 
 @task(name="Save weekly feedback")
@@ -747,7 +805,7 @@ def save_weekly(week_end: str, analysis: dict, critic: dict, ctx: dict) -> None:
         "messages": json.dumps(messages, ensure_ascii=False),
         "model": MODEL,
         "context_summary": json.dumps(
-            {"experiment": analysis.get("experiment"),
+            {"experiments": analysis.get("experiments"),
              "critic": critic,
              "queries_executed": analysis.get("_queries_executed"),
              "context": ctx},
@@ -793,14 +851,14 @@ def ai_feedback_weekly_flow(week_end: str | None = None, force: bool = False):
             f"再提案 {len(proposal_result['bumped'])}件 / "
             f"不採用 {len(proposal_result['skipped'])}件"
         )
-    issue_id = register_experiment(analysis.get("experiment") or {}, week_end)
+    issue_ids = register_experiments(analysis.get("experiments") or [], week_end)
     save_weekly(week_end, analysis, critic, ctx)
 
     return {
         "skipped": False,
         "insights": len(analysis.get("insights") or []),
         "queries_executed": len(analysis.get("_queries_executed") or []),
-        "experiment_issue_id": issue_id,
+        "experiment_issue_ids": issue_ids,
         "missed_by_critic": len(critic.get("missed") or []),
         "instrumentation_proposals": proposal_result,
     }
