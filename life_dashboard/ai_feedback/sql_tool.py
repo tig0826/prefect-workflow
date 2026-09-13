@@ -195,6 +195,14 @@ YouTube Music を YouTube から分離済み。前面時間とは別物。
   feedback_date DATE, slot VARCHAR, messages VARCHAR(JSON), generated_at TIMESTAMP
 過去に何を言ったか。同じことを繰り返さないための参照。
 
+## life_gold.chat_messages ★本人がチャットで実際に言った発言（唯一の一次資料）
+  message_id VARCHAR, message_ts TIMESTAMP, chat_date DATE,
+  role VARCHAR('user'|'assistant'), text VARCHAR, ts_source VARCHAR, created_at TIMESTAMP
+`role = 'user'` の行だけが本人の発言。「眠い」「しんどい」のような自己申告は、
+他の受動指標のどれにも無いラベル源（欠測がランダムでない指標が多いため、
+調子が悪い日ほど他が拾えない）。仮説の根拠や `unaddressed_problems` の手がかりとして
+使ってよいが、**本文にそのまま長文で引用しない**（要約・言い換えて使うこと）。
+
 制約:
 - SELECT / WITH のみ。1文だけ。LIMIT は自動で付く（最大200行）
 - URL・ページタイトル・曲名・食事の品目は参照できない
