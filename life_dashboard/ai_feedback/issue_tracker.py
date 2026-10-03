@@ -35,6 +35,18 @@ MENTION_LIMIT_BEFORE_ABANDON = 4
 # 1日でも満たせば卒業にすると、ノイズで上振れした日に誤って外れる。
 GRADUATION_DAYS = 5
 
+# verifying に上がった仮説を閉じるまでに、目標を何日連続で満たし続ける必要があるか。
+# 卒業（5日）から少なくとも1週間強は様子を見る。一時的に下がっただけの効果で閉じないため。
+VERIFY_DAYS_BEFORE_CLOSE = 14
+
+# verifying の仮説が、直近この日数すべてで目標を外したら testing に戻す（後戻りの検出）。
+REGRESSION_DAYS = 3
+
+# 日次で指標を評価する仮説の status。実況するのは open/testing だけで、
+# verifying は「閉じるか戻すか」を判定するためだけに評価を続ける。
+EVALUATED_STATUSES = ("open", "testing", "verifying")
+NARRATED_STATUSES = ("open", "testing")
+
 # metric が「動いた」と見なす最小変化率。測定ノイズを改善と誤読しないため。
 MIN_MEANINGFUL_CHANGE_PCT = 10.0
 
@@ -96,9 +108,13 @@ def load_active_issues() -> list[dict]:
     Trino に残すのは ai_metric_history（時系列）だけ。
 
     issue_id は GitHub の issue 番号（例 "13"）。旧 "ISS-xxx" 形式は使わない。
+
+    ★2026-10-03: verifying も返す★
+    日次で実況するのは open/testing だけ（呼び出し側で NARRATED_STATUSES で絞る）。
+    verifying は「安定したので閉じる / 後戻りしたので戻す」の判定のために評価だけ続ける。
     """
     rows = []
-    for h in gt.load_active_hypotheses():
+    for h in gt.load_active_hypotheses(statuses=EVALUATED_STATUSES):
         rows.append(
             {
                 "issue_id": str(h["number"]),
@@ -214,15 +230,68 @@ def interventions_for_issue(issue_id: str) -> list[dict]:
 
 
 def metric_history(issue_id: str, days: int = 28) -> list[dict]:
-    """metric の時系列。「効いたか」を言うための土台。"""
+    """metric の時系列（1日1行）。「効いたか」を言うための土台。
+
+    ★2026-10-03: 日付で重複を除く★
+    ai_metric_history には同じ日の行が複数入る（実測: 9/30 だけで4行）。
+    日次の手動リラン、週次の evaluate_all_issues（week_end が日次の評価日と重なる）が
+    それぞれ INSERT するため。重複のまま「連続○日達成」を数えると、
+    2日分しか無いのに5日連続と誤判定する。値の取れた行を優先し、その中で最新を採る。
+    """
     df = TRINO.execute_query(f"""
         SELECT CAST(eval_date AS VARCHAR) AS eval_date, metric_value, adherence_pct, eval_error
-        FROM iceberg.life_gold.ai_metric_history
-        WHERE issue_id = {_q(issue_id)}
-          AND eval_date >= date_add('day', -{days}, current_date)
+        FROM (
+          SELECT eval_date, metric_value, adherence_pct, eval_error,
+                 row_number() OVER (
+                   PARTITION BY eval_date
+                   ORDER BY CASE WHEN metric_value IS NULL THEN 1 ELSE 0 END, evaluated_at DESC
+                 ) AS rn
+          FROM iceberg.life_gold.ai_metric_history
+          WHERE issue_id = {_q(issue_id)}
+            AND eval_date >= date_add('day', -{days}, current_date)
+        )
+        WHERE rn = 1
         ORDER BY eval_date
     """)
     return _records(df)
+
+
+def daily_values(history: list[dict] | None) -> list[tuple[str, float]]:
+    """履歴を (日付, 値) の昇順リストにする。値の無い日は落とし、同じ日は最後の1件だけ残す。
+
+    ★履歴のキーは metric_value★
+    以前 enforce_graduation は `h["v"]` を読んでいたが、evaluate_all_issues が返す
+    履歴のキーは `metric_value` で、`{"d","v"}` への変換は LLM に渡す ctx 側でしか
+    していなかった。そのため卒業判定に届く履歴は常に空で、連続日数は毎回 0、
+    卒業は入れた日から一度も起きていなかった（#7 は 9/9 以降ずっと目標以下なのに
+    testing のまま毎朝実況されていた）。履歴の解釈はここに一本化する。
+    """
+    by_date: dict[str, float] = {}
+    for h in history or []:
+        v = h.get("metric_value")
+        d = h.get("eval_date")
+        if v is None or d is None:
+            continue
+        by_date[str(d)[:10]] = float(v)
+    return sorted(by_date.items())
+
+
+def _meets(v: float, target: float, direction: str) -> bool:
+    return v <= target if direction == "decrease" else v >= target
+
+
+def target_streak(e: dict) -> int:
+    """履歴の末尾から、目標を連続で満たしている日数。目標・方向が無ければ 0。"""
+    target = e.get("target_value")
+    direction = e.get("target_direction")
+    if target is None or direction not in ("decrease", "increase"):
+        return 0
+    streak = 0
+    for _, v in reversed(daily_values(e.get("history"))):
+        if not _meets(v, target, direction):
+            break
+        streak += 1
+    return streak
 
 
 # ─────────────────────────────────────────────────────────────
@@ -534,6 +603,15 @@ def enforce_abandonment(evaluated: list[dict]) -> list[dict]:
     まだ Iceberg に入っていない）。よって現時点では「介入が存在し、
     MIN_INTERVENTION_DAYS 以上経過している」までを条件とする。
     遵守率が取れるようになったら、ここに条件を足す。
+
+    ★未解決: testing の仮説は棄却されない（2026-10-03 時点で意図的に据え置き）★
+    `status != "open"` で弾いているので、介入を打った（testing の）仮説は
+    指標が動かなくても棄却されない。上の表の「介入あり + 期間経過 + 動かない」は
+    本来 testing の仮説のことなので条件としてはずれている。
+    ただし今の「介入」には打ち手でないものが混ざっている（#13 の介入 #3 は
+    DQX のインストール＝原因そのもの）。#8 は指標＝打ち手の対象（画面時間）なので、
+    打ち手が効かなかっただけで仮説が外れたわけではない。この状態で testing まで
+    自動棄却すると誤った「反証済み」が増えるので、介入の質を判定できるまで広げない。
     """
     result = []
     for e in evaluated:
@@ -609,46 +687,176 @@ def enforce_graduation(evaluated: list[dict]) -> list[dict]:
     したがって達成時に問いを切り替える:
         「漫画は減ったか」→「親の課題は動いたか」
     親が動けば solved、動かなければ仮説自体が誤りなので新しい仮説へ。
-    その判断は本人と weekly に委ねるので、ここでは閉じない。
+    親の課題の判断は親の issue 側で続ける。
+
+    ★2026-10-03: 卒業後の出口を作った★
+    以前は「その判断は本人と weekly に委ねる」と書かれていたが weekly 側は未実装で、
+    verifying は行き止まりだった。今は enforce_verification が続きを引き受ける
+    （VERIFY_DAYS_BEFORE_CLOSE 日連続で安定 → close / 後戻り → testing）。
+
+    ★2026-10-03: 履歴の読み方のバグを直した★ daily_values の説明を参照。
     """
     graduated = []
     for e in evaluated:
-        if e.get("status") not in ("open", "testing"):
+        if e.get("status") not in NARRATED_STATUSES:
             continue
-        target = e.get("target_value")
-        direction = e.get("target_direction")
-        if target is None or direction not in ("decrease", "increase"):
-            continue
-
         # 履歴の末尾から連続で目標を満たしている日数を数える。
         # 単日の達成で卒業させると、ノイズで上振れした日に誤って外れる。
-        hist = [h for h in (e.get("history") or []) if h.get("v") is not None]
-        streak = 0
-        for h in reversed(hist):
-            ok = h["v"] <= target if direction == "decrease" else h["v"] >= target
-            if not ok:
-                break
-            streak += 1
+        streak = target_streak(e)
         if streak < GRADUATION_DAYS:
             continue
+        target = e.get("target_value")
 
         note = (
             f"[auto] metric「{e.get('metric_name')}」が目標 {target} を "
             f"{streak}日連続で満たしたため、この仮説の検証は完了とみなす。"
             f"baseline {e.get('baseline_value')} → 現在 {e.get('current_value')}。\n\n"
             f"**打った手が効いたことは示されたが、親の課題が解決したとは限らない。**"
-            f"以後の問いは「この指標が下がったか」ではなく"
+            f"以後の問いは「この指標が目標に届いたか」ではなく"
             f"「親の課題が動いたか」に切り替える。"
-            f"親が動いていなければ、効果が別の行動に移っただけの可能性があるので、"
-            f"この仮説は棄却して新しい仮説を立てること。"
+            f"親が動いていなければ、効果が別の行動に移っただけの可能性がある。\n\n"
+            f"この仮説は日次の実況から外れる。指標の評価は続け、"
+            f"{VERIFY_DAYS_BEFORE_CLOSE}日連続で目標を満たし続けたら自動で close、"
+            f"直近{REGRESSION_DAYS}日すべてで目標を外したら testing に戻す。"
         )
         set_status(e["issue_id"], "verifying", note)
         e["status"] = "verifying"
+        e["graduated_now"] = True  # 同じ実行で enforce_verification に閉じさせない
         e["graduation_note"] = note
         e["graduation_streak"] = streak
         print(f"🎓 verifying {e['issue_id']}: {e.get('title')}（{streak}日連続で目標達成）")
         graduated.append(e)
     return graduated
+
+
+def enforce_verification(evaluated: list[dict]) -> tuple[list[dict], list[dict]]:
+    """verifying の仮説を「閉じる / testing に戻す / 待つ」に仕分ける。
+
+    ★これが無いと verifying が行き止まりになる★
+    卒業（enforce_graduation）は実況から外すだけで、その先の出口が無かった。
+    閉じる判断を人に委ねたまま誰も見に来ないので、成功した仮説ほど open のまま溜まる。
+
+      目標を VERIFY_DAYS_BEFORE_CLOSE 日連続で満たしている → close（completed）
+      直近 REGRESSION_DAYS 日すべてで目標を外した          → testing に戻して実況を再開
+      それ以外                                           → 待つ
+
+    閉じても親の課題（life:problem）は閉じない。仮説の検証が終わっただけで、
+    課題が解決したかは課題の側で判断する。
+
+    返り値: (閉じたもの, testing に戻したもの)
+    """
+    closed, regressed = [], []
+    for e in evaluated:
+        if e.get("status") != "verifying" or e.get("graduated_now"):
+            continue
+        target = e.get("target_value")
+        direction = e.get("target_direction")
+        if target is None or direction not in ("decrease", "increase"):
+            continue
+        vals = daily_values(e.get("history"))
+        if not vals:
+            continue
+
+        streak = target_streak(e)
+        if streak >= VERIFY_DAYS_BEFORE_CLOSE:
+            note = (
+                f"[auto] verifying に上がった後も、metric「{e.get('metric_name')}」が "
+                f"{streak}日連続で目標 {target} を満たし続けたため、この仮説の検証を完了として close する。"
+                f"baseline {e.get('baseline_value')} → 現在 {e.get('current_value')}。\n\n"
+                f"**親の課題は閉じない。** 打った手が効いたことは確かめられたが、"
+                f"課題そのものが解決したかは課題の側で判断する。"
+                f"後で同じ問題がぶり返したら、この issue を reopen して status を testing に戻すこと。"
+            )
+            gt.close_issue(int(e["issue_id"]), "completed", note)
+            e["status"] = "closed"
+            e["close_kind"] = "verified"
+            print(f"✅ closed(verified) {e['issue_id']}: {e.get('title')}（{streak}日連続）")
+            closed.append(e)
+            continue
+
+        recent = vals[-REGRESSION_DAYS:]
+        if len(recent) == REGRESSION_DAYS and not any(_meets(v, target, direction) for _, v in recent):
+            note = (
+                f"[auto] verifying の後、metric「{e.get('metric_name')}」が直近{REGRESSION_DAYS}日すべてで"
+                f"目標 {target} を外した（{', '.join(f'{d}: {v}' for d, v in recent)}）。"
+                f"効果が後戻りした可能性があるので testing に戻し、日次の実況を再開する。"
+            )
+            set_status(e["issue_id"], "testing", note)
+            e["status"] = "testing"
+            print(f"↩️ regressed {e['issue_id']}: {e.get('title')}")
+            regressed.append(e)
+    return closed, regressed
+
+
+def process_close_requests() -> list[dict]:
+    """本人が「閉じてよい」と言った issue（司書が req:close を付けたもの）を閉じる。
+
+    ★なぜ司書に close させないか★
+    ダッシュボード側は close を実装しない規約（github-tickets.ts の冒頭）。
+    書き手が増えると状態を争って台帳が腐るので、close は日次フローに一本化する。
+    司書は「本人がそう言った」という事実を `req:close` とコメントで残すだけ。
+
+    ★以前は本人の判断が通らなかった★
+    #7 には本人の「クローズでいい」がチャット経由で3回コメントされていたが、
+    閉じる経路がどこにも無く open のままだった。
+
+    種類（課題・仮説・打った手）は問わない。本人の判断を優先する。
+    """
+    out = []
+    for i in gt.load_close_requests():
+        gt.close_issue(
+            i["number"],
+            "completed",
+            "[auto] 本人が会話の中で「閉じてよい」と判断したため close する"
+            "（ダッシュボードの記録係が `req:close` を付けた。本人の発言は上のコメントを参照）。"
+            "間違いなら reopen すればよい（`req:close` は外してある）。",
+        )
+        print(f"🙆 closed(requested) #{i['number']}: {i['title']}")
+        out.append({"issue_id": str(i["number"]), "title": i["title"], "close_kind": "requested"})
+    return out
+
+
+METRIC_COMMENT_PREFIX = "## 指標の推移"
+
+
+def render_metric_comment(e: dict, days: int = 14) -> str:
+    vals = daily_values(e.get("history"))[-days:]
+    head = f"{METRIC_COMMENT_PREFIX}（直近{len(vals)}日）\n\n"
+    if not vals:
+        return head + "まだ値がありません。\n"
+    (d0, v0), (d1, v1) = vals[0], vals[-1]
+    trend = f"{v0} ({d0}) → {v1} ({d1})"
+    if v0:
+        trend += f" {((v1 - v0) / abs(v0) * 100):+.1f}%"
+    target = e.get("target_value")
+    rows = "\n".join(f"| {d} | {v} |" for d, v in vals)
+    return (
+        head
+        + f"{trend}\n\n目標: {target}（{e.get('target_direction')}）"
+        + f" / 目標の連続達成: {target_streak(e)}日 / status: {e.get('status')}\n\n"
+        + "| 日付 | 値 |\n|---|---|\n"
+        + rows
+        + "\n\n<sub>日次フローが評価するたびにこのコメントを上書きします（毎日追記すると読めなくなるため）。"
+        + "同じ日に複数回評価された場合は最後の値を採っています。</sub>"
+    )
+
+
+def sync_metric_comments(evaluated: list[dict]) -> None:
+    """評価した仮説の「指標の推移」コメントを最新にする。
+
+    ★以前はこのコメントを更新する処理が存在しなかった★
+    9/3 の GitHub 移行時に1度だけ書かれ、本文には「日次フローが評価するたびに更新されます」
+    とあるのに実装が無く、9/1 の値のまま止まっていた（#7 は実際には 9/9 以降ずっと
+    目標以下なのに、チケット上は 58分/日 に見えていた）。
+    失敗しても日次FBは止めない（1件ずつ握りつぶしてログに残す）。
+    """
+    for e in evaluated:
+        if e.get("status") not in EVALUATED_STATUSES and e.get("status") != "closed":
+            continue
+        try:
+            gt.upsert_comment(int(e["issue_id"]), METRIC_COMMENT_PREFIX, render_metric_comment(e))
+        except Exception as ex:  # noqa: BLE001
+            print(f"⚠️ #{e['issue_id']} の指標コメント更新に失敗: {ex}")
 
 
 def revive_untested() -> list[dict]:

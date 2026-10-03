@@ -73,6 +73,12 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%gogh%' OR LOWER(raw_window_title) LIKE '%gogh%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%chatgpt%' OR LOWER(raw_window_title) LIKE '%chatgpt%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN 'DEVELOP'
+            -- 2026-10-03 追加（本人の指示）: Claude デスクトップ／スマホアプリは個人開発。
+            -- それまでは未分類で BROWSING（ネットサーフィン）に落ちていた（9/1〜10/2 で Mac 465分・スマホ 44分）。
+            -- アプリ名だけで判定し、ウィンドウタイトルは見ない。タイトルには
+            -- 「Billing | Claude Platform」や Superset のグループ名など、開発でない画面も入るため。
+            -- 業務 Mac の Claude は上の usage_type='work' が先に WORK にする。
+            WHEN LOWER(raw_app_name) LIKE '%claude%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%qiita%' OR LOWER(raw_window_title) LIKE '%qiita%' THEN 'DEVELOP'
             WHEN LOWER(raw_app_name) LIKE '%udemy%' OR LOWER(raw_window_title) LIKE '%udemy%' THEN 'DEVELOP'
             -- 資格試験の過去問道場（*-siken.com）。ブラウザで開くため
@@ -149,6 +155,7 @@ categorized AS (
             WHEN LOWER(raw_app_name) LIKE '%ghostty%' OR LOWER(raw_app_name) LIKE '%vscode%' THEN '個人開発(コーディング)'
             WHEN LOWER(raw_app_name) LIKE '%notion%' OR LOWER(raw_window_title) LIKE '%notion%' THEN 'notion'
             WHEN LOWER(raw_app_name) LIKE '%gogh%' OR LOWER(raw_window_title) LIKE '%gogh%' THEN 'Gogh'
+            WHEN LOWER(raw_app_name) LIKE '%claude%' THEN '個人開発(Claude)'
             WHEN LOWER(raw_app_name) LIKE '%chatgpt%' OR LOWER(raw_window_title) LIKE '%chatgpt%'
               OR LOWER(raw_app_name) LIKE '%gemini%' OR LOWER(raw_window_title) LIKE '%gemini%' THEN '個人開発(AIペアプロ)'
             WHEN LOWER(raw_window_title) LIKE '%life dashboard%'
@@ -298,7 +305,7 @@ kinded AS (
         -- Gemini/ChatGPT/Notion は用途で名前が変わるので、判定結果に合わせて付け替える。
         CASE
             WHEN d.cat_main <> 'DEVELOP' THEN d.cat_sub
-            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)', '学習', 'qiita')
+            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)', '個人開発(Claude)', '学習', 'qiita')
                 THEN d.cat_sub
             -- 曖昧なもの（AIペアプロ / notion）はブロック判定に従って名前も変える
             WHEN r.develop_sec > 0
@@ -311,7 +318,11 @@ kinded AS (
         CASE
             WHEN d.cat_main <> 'DEVELOP' THEN d.cat_main
             -- 確定しているものはブロックに関係なく確定させる
-            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)') THEN 'DEVELOP'
+            -- ★Claude は確定扱い★ Claude（Code / Cowork）での開発はアプリの中で完結し、
+            -- ターミナルをほとんど触らない。ブロック判定（コーディング系が20%以上なら開発）に
+            -- 従わせると、Claude だけのブロックは全部「勉強」に落ちてしまう。
+            -- 逆に coding_sec には数えない（同じブロックの Gemini/Notion の判定は従来どおり）。
+            WHEN d.cat_sub IN ('個人開発(コーディング)', '個人開発(自宅インフラ)', '個人開発(Claude)') THEN 'DEVELOP'
             WHEN d.cat_sub IN ('学習', 'qiita') THEN 'STUDY'
             -- 曖昧なもの（AIペアプロ = Gemini/ChatGPT、notion）だけブロックに従う
             WHEN r.develop_sec > 0

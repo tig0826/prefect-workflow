@@ -1,9 +1,10 @@
 import os
 from prefect import task
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 
-@task(name="Create External Table from Template")
+@task(name="Create External Table from Template", **STORAGE_RETRY)
 def create_external(system_name: str, params: dict = None):
     """
     system_name: ドメイン名（例: "aw", "fitbit", "asken"）
@@ -26,7 +27,7 @@ def create_external(system_name: str, params: dict = None):
     api.execute_action(query)
 
 
-@task(name="Sync Trino Partition", retries=3, retry_delay_seconds=10)
+@task(name="Sync Trino Partition", **STORAGE_RETRY)
 def sync_table_partition(table_name: str):
     """1つのテーブルのパーティションを同期するタスク"""
     catalog_name = "hive"

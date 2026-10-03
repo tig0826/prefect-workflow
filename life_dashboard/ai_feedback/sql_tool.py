@@ -102,6 +102,16 @@ def run_sql(query: str) -> str:
 SCHEMA_DOC = """\
 利用できるテーブル（すべて catalog=iceberg、読み取り専用）:
 
+## 短期データと長期データの使い分け（本人の指摘。原則として扱う）
+出張・有給・体調不良など「その日だけ通常と違う理由がある日」を判別するデータは今は無い。
+そのため日数の少ない集計（数日〜1,2週間）は、たまたま混ざった特殊な1日に平均が
+大きく引っ張られやすい。**「変動・予兆の検知」（直近悪化していないか等）には短期でよいが、
+「傾向」「人間性」「その人の特性」のように安定した性質を語るときは、
+数ヶ月単位の長期データを優先し、日数が少ない集計での断定は避けること。**
+n（対象日数）が一桁〜十数日程度の集計から「〜な人だ」「本質的に〜」のような
+性質の話をしない。長期集計でも外れ値が疑われる日（休日を平日集計に含めていないか、
+極端に低い/高い1日が全体を引っ張っていないか）は個別に確認する。
+
 ## life_gold.mrt_ai_activity_hourly ★行動分析の主テーブル
 日 × 時 × ソース × ホスト × cat_main × cat_sub の秒数。**priority 抑制なし**なので
 同じ時間に複数行が立つのが正しい（睡眠と画面が重なる = 寝落ち視聴が見える）。
@@ -170,6 +180,12 @@ NULL を 0 埋めしたり「改善」と読まないこと。`signals_available
   target_date DATE, work_core_sec BIGINT, work_score INT, work_focus_rate INT,
   dev_core_sec BIGINT, dev_score INT, dev_focus_rate INT, work_apps_str VARCHAR,
   dev_apps_str VARCHAR
+**平日で絞るには day_of_week(target_date) <= 5。** 休日の work_score 0 を
+不調としてカウントすると誤読する。
+**day_of_week だけでは祝日を除外できない。** 祝日テーブルは無いので、
+平日のはずなのに work_score が 0 または極端に低い日が1〜数日混ざっていないか、
+集計前に個別の日付を見て確認すること。混ざっていれば祝日の可能性が高い。
+気づかずに平均へ含めると、平日の実態より悪い数値が出て誤った結論を導く。
 
 ## life_gold.mrt_asken（食事・栄養）
   target_date DATE, calories_kcal DOUBLE, protein_g DOUBLE, fat_g DOUBLE,

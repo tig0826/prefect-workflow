@@ -26,6 +26,7 @@ from prefect import task
 
 from ai_feedback import issue_tracker as it
 from ai_feedback import stats
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 TRINO = TrinoAPI(host="trino.mynet", port=80, user="ai-discovery", catalog="iceberg")
@@ -149,7 +150,7 @@ ORDER BY o.overlap_min DESC
 """
 
 
-@task(name="Discover overlaps", retries=1, retry_delay_seconds=30)
+@task(name="Discover overlaps", **STORAGE_RETRY)
 def discover_overlaps(start: str) -> dict:
     """同時刻に立つ活動の組み合わせを総当たりする。
 
@@ -283,7 +284,7 @@ ORDER BY 4 DESC
 """
 
 
-@task(name="Discover transitions", retries=1, retry_delay_seconds=30)
+@task(name="Discover transitions", **STORAGE_RETRY)
 def discover_transitions(start: str) -> dict:
     """「Xの直前に何が起きているか」を総当たりする。
 
@@ -359,7 +360,7 @@ ORDER BY d.target_date
 """
 
 
-@task(name="Discover absences", retries=1, retry_delay_seconds=30)
+@task(name="Discover absences", **STORAGE_RETRY)
 def discover_absences(start: str, end: str) -> dict:
     """「何が起きなかったか」を出す。
 
