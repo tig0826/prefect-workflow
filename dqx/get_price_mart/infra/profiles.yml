@@ -10,6 +10,7 @@ get_price_mart:
       port: 8080
       schema: dqx
       threads: 3
+      http_timeout: 120
 
   target: dqx
 
