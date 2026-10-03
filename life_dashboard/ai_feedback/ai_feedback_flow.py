@@ -11,6 +11,7 @@ from prefect import flow, task
 from prefect.blocks.system import Secret
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -112,7 +113,7 @@ def _correlation(xs: list, ys: list) -> dict | None:
     return None
 
 
-@task(name="Fetch enriched daily context from Trino")
+@task(name="Fetch enriched daily context from Trino", **STORAGE_RETRY)
 def fetch_context(target_date: str) -> dict:
     # ─── 1. 今日の詳細データ ───────────────────────────────────────
     fitness_df = TRINO.execute_query(f"""
@@ -652,7 +653,7 @@ def generate_feedback(ctx: dict, slot: str, api_key: str) -> list[dict]:
     return json.loads(text)
 
 
-@task(name="Save feedback to Iceberg")
+@task(name="Save feedback to Iceberg", **STORAGE_RETRY)
 def save_feedback(target_date: str, slot: str, messages: list[dict], ctx: dict):
     import pandas as pd
 

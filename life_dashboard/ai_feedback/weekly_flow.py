@@ -28,6 +28,7 @@ from prefect.blocks.system import Secret
 from ai_feedback import discovery
 from ai_feedback import issue_tracker as it
 from ai_feedback import sql_tool
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -42,7 +43,7 @@ SLOT = "weekly"
 # ─────────────────────────────────────────────────────────────
 # コンテキスト
 # ─────────────────────────────────────────────────────────────
-@task(name="Fetch weekly comparison")
+@task(name="Fetch weekly comparison", **STORAGE_RETRY)
 def fetch_weekly_comparison(week_end: str) -> dict:
     """直近7日 vs その前7日。日次では見えない変化を拾うため。
 
@@ -175,7 +176,7 @@ def fetch_weekly_comparison(week_end: str) -> dict:
     return out
 
 
-@task(name="Fetch weekday vs weekend")
+@task(name="Fetch weekday vs weekend", **STORAGE_RETRY)
 def fetch_daytype_comparison(week_end: str, days: int = 28) -> dict:
     """平日 vs 休日の比較。
 
@@ -267,7 +268,7 @@ def fetch_daytype_comparison(week_end: str, days: int = 28) -> dict:
     return out
 
 
-@task(name="Fetch intervention effects")
+@task(name="Fetch intervention effects", **STORAGE_RETRY)
 def fetch_intervention_effects(week_end: str) -> list[dict]:
     """介入日で期間を切った前後比較。
 
@@ -306,7 +307,7 @@ def fetch_intervention_effects(week_end: str) -> list[dict]:
     return out
 
 
-@task(name="Fetch recent feedback history")
+@task(name="Fetch recent feedback history", **STORAGE_RETRY)
 def fetch_recent_feedback(week_end: str, days: int = 14) -> list[dict]:
     df = TRINO.execute_query(f"""
         SELECT CAST(feedback_date AS VARCHAR) AS d, slot, messages
@@ -372,7 +373,10 @@ _RUN_SQL_DECL = types.FunctionDeclaration(
 )
 
 _WEEKLY_PROMPT = """\
-あなたはユーザー専属のライフアナリストです。週に1回、月曜の朝に届く分析を書きます。
+あなたはユーザー専属のライフアナリストで、医学・心理学・カウンセリングの専門知識を持つ。
+週に1回、月曜の朝に届く分析を書きます。
+★2026-09-30追加★ 本人の指示:「前提として、医学や心理学、カウンセリングなどの専門家として
+振る舞ってほしい」。仮説を医学・化学などの知見から発想してよいのは、この専門性が前提にあるため。
 
 ## あなたの役割
 
@@ -383,8 +387,22 @@ _WEEKLY_PROMPT = """\
 
 `run_sql` で Trino に読み取り専用SQLを投げられます。渡されたコンテキストは出発点に
 過ぎません。**仮説を思いついたら必ずSQLで検証してください。** 最低5回は掘ること。
-Web検索も使えますが、**順序を守ってください**: 先に自分のデータの数値を確定させ、
-それを説明するために文献知識を引く。逆順にすると一般論に戻ります。
+
+★2026-09-30修正: 「先にデータ→後で文献」の順序強制を撤廃★
+本人の指摘:「仮説についてはデータだけではなく、医学や化学に基づいた知識からでも良い。
+私が知らなそうなアプローチや知見からの評価や問診をしてもらえると良いだろう」。
+以前はここで「先に自分のデータの数値を確定させ、それを説明するために文献知識を引く。
+逆順にすると一般論に戻ります」と、文献・医学知識を常にデータの後追いに限定していた。
+これだと `unaddressed_problems`（まだ仮説が無い課題）でデータに何も出ていない時、
+文献発の仮説を持ち出す道が塞がれる。
+Web検索は好きな順で使ってよい。**先に医学・化学・栄養学などの知見から
+「本人が気づいていなそうなアプローチ」を持ち出し、それが本人のデータに当てはまるか
+run_sql で確かめる、という順も歓迎する。** ただし実験として登録するには、
+どちらの順で思いついたかに関わらず、最終的に自分のデータで検証可能な
+`metric_sql` に落とし込めることが条件（既存の必須条件セクション参照）。
+文献発の仮説で `metric_sql` が書けない（測りようがない）場合は、実験ではなく
+「確認したいことがあるとき」の `type: "question"` に回すか、insights で
+一般知見として本人に伝えるだけでもよい。
 
 {schema_doc}
 
@@ -788,7 +806,7 @@ def register_experiments(exps: list[dict], week_end: str) -> list[str]:
     return issue_ids
 
 
-@task(name="Save weekly feedback")
+@task(name="Save weekly feedback", **STORAGE_RETRY)
 def save_weekly(week_end: str, analysis: dict, critic: dict, ctx: dict) -> None:
     import pandas as pd
 

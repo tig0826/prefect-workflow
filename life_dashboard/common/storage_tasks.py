@@ -6,6 +6,8 @@ from prefect import task
 from prefect.variables import Variable
 from prefect.blocks.system import Secret
 
+from common.retry_policy import STORAGE_RETRY
+
 
 def connect_s3_client():
     endpoint_url = Variable.get("minio-endpoint", default="http://minio.mynet")
@@ -21,7 +23,7 @@ def connect_s3_client():
     return client, bucket
 
 
-@task(retries=3, retry_delay_seconds=30, name="Save JSON to Datalake (MinIO)")
+@task(name="Save JSON to Datalake (MinIO)", **STORAGE_RETRY)
 def save_json_to_s3(data: dict, prefix: str, file_name: str):
     """
     取得した辞書データをMinIO (S3) のBronze層に保存する共通タスク。
@@ -49,7 +51,7 @@ def save_json_to_s3(data: dict, prefix: str, file_name: str):
         raise
 
 
-@task(retries=3, retry_delay_seconds=30, name="Save Bytes to Datalake (MinIO)")
+@task(name="Save Bytes to Datalake (MinIO)", **STORAGE_RETRY)
 def save_bytes_to_s3(
     data: bytes,
     prefix: str,

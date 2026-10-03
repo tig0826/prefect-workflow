@@ -32,6 +32,7 @@ from aw_exporter.aw_flow import (
     events_to_jsonl,
     scrape_aw_data,
 )
+from common.retry_policy import STORAGE_RETRY
 from common.storage_tasks import save_json_to_s3
 from common.trino_api import TrinoAPI
 from common.trino_tasks import sync_table_partition
@@ -40,7 +41,7 @@ JST = ZoneInfo("Asia/Tokyo")
 BRONZE_SCHEMA = "life_bronze"
 
 
-@task(name="Count bronze events per bucket/day", retries=2, retry_delay_seconds=30)
+@task(name="Count bronze events per bucket/day", **STORAGE_RETRY)
 def fetch_bronze_counts(start: date, end: date) -> dict[tuple[str, str], int]:
     """bronze の (バケット, dt) -> 件数 を1クエリでまとめて取る。
 

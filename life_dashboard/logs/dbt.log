@@ -45,3 +45,115 @@ Runtime Error
 [0m02:01:25.698880 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d425dc0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d67ed50>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9c71d0>]}
 [0m02:01:25.699001 [debug] [MainThread]: Flushing usage events
 [0m02:01:26.478931 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m01:54:48.057093 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109beda90>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2af0b0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2aec60>]}
+
+
+============================== 01:54:48.059695 | ccedc3a9-9c69-45b2-a170-53d93325312c ==============================
+[0m01:54:48.059695 [info ] [MainThread]: Running with dbt=1.11.7
+[0m01:54:48.059978 [debug] [MainThread]: running dbt with arguments {'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'fail_fast': 'False', 'cache_selected_only': 'False', 'empty': 'False', 'version_check': 'True', 'use_colors': 'True', 'log_cache_events': 'False', 'indirect_selection': 'eager', 'write_json': 'True', 'static_parser': 'True', 'target_path': 'None', 'quiet': 'False', 'warn_error': 'None', 'log_format': 'default', 'no_print': 'None', 'introspect': 'True', 'invocation_command': 'dbt build --select models/silver models/intermediate models/gold --full-refresh', 'debug': 'False', 'use_experimental_parser': 'False', 'printer_width': '80', 'partial_parse': 'True', 'send_anonymous_usage_stats': 'True', 'log_path': 'logs', 'profiles_dir': '/Users/tig/.dbt'}
+[0m01:54:48.060276 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m01:54:48.060590 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.0370115, "process_in_blocks": "0", "process_kernel_time": 0.109293, "process_mem_max_rss": "109936640", "process_out_blocks": "0", "process_user_time": 0.48944}
+[0m01:54:48.060788 [debug] [MainThread]: Command `dbt build` failed at 01:54:48.060749 after 0.04 seconds
+[0m01:54:48.060942 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x101073740>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2af230>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10a2af080>]}
+[0m01:54:48.061113 [debug] [MainThread]: Flushing usage events
+[0m01:54:48.847683 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m21:13:22.410650 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b75c4a0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e047050>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e046c00>]}
+
+
+============================== 21:13:22.412975 | 06249a46-8634-4563-a41c-b58efe6f5536 ==============================
+[0m21:13:22.412975 [info ] [MainThread]: Running with dbt=1.11.7
+[0m21:13:22.413220 [debug] [MainThread]: running dbt with arguments {'static_parser': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'log_format': 'default', 'profiles_dir': '/Users/tig/.dbt', 'no_print': 'None', 'fail_fast': 'False', 'warn_error': 'None', 'use_experimental_parser': 'False', 'cache_selected_only': 'False', 'send_anonymous_usage_stats': 'True', 'log_path': 'logs', 'indirect_selection': 'eager', 'target_path': 'None', 'debug': 'False', 'printer_width': '80', 'use_colors': 'True', 'partial_parse': 'True', 'quiet': 'False', 'introspect': 'True', 'invocation_command': 'dbt build --select asken_meal asken_nutrition mrt_asken_daily_summary --full-refresh', 'log_cache_events': 'False', 'write_json': 'True', 'version_check': 'True', 'empty': 'False'}
+[0m21:13:22.413471 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m21:13:22.413722 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.036292166, "process_in_blocks": "0", "process_kernel_time": 0.095689, "process_mem_max_rss": "110198784", "process_out_blocks": "0", "process_user_time": 0.436121}
+[0m21:13:22.413910 [debug] [MainThread]: Command `dbt build` failed at 21:13:22.413874 after 0.04 seconds
+[0m21:13:22.414034 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10dcdd880>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10d9849b0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e047290>]}
+[0m21:13:22.414194 [debug] [MainThread]: Flushing usage events
+[0m21:13:23.282790 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m22:30:17.724502 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e17eb40>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e3baff0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e3baba0>]}
+
+
+============================== 22:30:17.726948 | 999a090d-664e-4832-a157-3c8c4f401581 ==============================
+[0m22:30:17.726948 [info ] [MainThread]: Running with dbt=1.11.7
+[0m22:30:17.727194 [debug] [MainThread]: running dbt with arguments {'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'invocation_command': 'dbt build --select mrt_aw_daily_work_summary', 'use_experimental_parser': 'False', 'no_print': 'None', 'printer_width': '80', 'introspect': 'True', 'profiles_dir': '/Users/tig/.dbt', 'version_check': 'True', 'fail_fast': 'False', 'debug': 'False', 'empty': 'False', 'log_format': 'default', 'cache_selected_only': 'False', 'use_colors': 'True', 'indirect_selection': 'eager', 'target_path': 'None', 'quiet': 'False', 'log_cache_events': 'False', 'send_anonymous_usage_stats': 'True', 'write_json': 'True', 'log_path': 'logs', 'static_parser': 'True', 'warn_error': 'None', 'partial_parse': 'True'}
+[0m22:30:17.727459 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m22:30:17.727691 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.037927292, "process_in_blocks": "0", "process_kernel_time": 0.113808, "process_mem_max_rss": "110280704", "process_out_blocks": "0", "process_user_time": 0.499363}
+[0m22:30:17.727898 [debug] [MainThread]: Command `dbt build` failed at 22:30:17.727834 after 0.04 seconds
+[0m22:30:17.728056 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x105057770>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e3bb140>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10e3ba9c0>]}
+[0m22:30:17.728185 [debug] [MainThread]: Flushing usage events
+[0m22:30:18.540536 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m19:28:08.096375 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b0bccb0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b01d1f0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b3511f0>]}
+
+
+============================== 19:28:08.098408 | 3c6cb5a5-fcb6-46f8-8e9a-7c81552e86b6 ==============================
+[0m19:28:08.098408 [info ] [MainThread]: Running with dbt=1.10.8
+[0m19:28:08.098617 [debug] [MainThread]: running dbt with arguments {'printer_width': '80', 'indirect_selection': 'eager', 'write_json': 'True', 'log_cache_events': 'False', 'partial_parse': 'True', 'cache_selected_only': 'False', 'profiles_dir': '/Users/tig/.dbt', 'fail_fast': 'False', 'warn_error': 'None', 'log_path': 'logs', 'debug': 'False', 'version_check': 'True', 'use_colors': 'True', 'use_experimental_parser': 'False', 'no_print': 'None', 'quiet': 'False', 'empty': 'False', 'log_format': 'default', 'introspect': 'True', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'static_parser': 'True', 'target_path': 'None', 'invocation_command': 'dbt run --full-refresh --select aw_window_events owntracks_stays asken_meal asken_nutrition int_aw_afk mrt_asken', 'send_anonymous_usage_stats': 'True'}
+[0m19:28:08.098849 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m19:28:08.099078 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": false, "command_wall_clock_time": 0.036586333, "process_in_blocks": "0", "process_kernel_time": 0.074612, "process_mem_max_rss": "108969984", "process_out_blocks": "0", "process_user_time": 0.46305}
+[0m19:28:08.099259 [debug] [MainThread]: Command `dbt run` failed at 19:28:08.099222 after 0.04 seconds
+[0m19:28:08.099382 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10ac67920>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b351790>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b352fc0>]}
+[0m19:28:08.099498 [debug] [MainThread]: Flushing usage events
+[0m19:28:08.878407 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m21:56:12.875624 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b85490>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d91af0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d913d0>]}
+
+
+============================== 21:56:12.878265 | dc4fb6e2-7e1c-480d-a672-335b7641e588 ==============================
+[0m21:56:12.878265 [info ] [MainThread]: Running with dbt=1.10.8
+[0m21:56:12.878506 [debug] [MainThread]: running dbt with arguments {'printer_width': '80', 'indirect_selection': 'eager', 'log_cache_events': 'False', 'write_json': 'True', 'partial_parse': 'True', 'cache_selected_only': 'False', 'profiles_dir': '/Users/tig/.dbt', 'fail_fast': 'False', 'warn_error': 'None', 'log_path': 'logs', 'debug': 'False', 'version_check': 'True', 'use_colors': 'True', 'use_experimental_parser': 'False', 'empty': 'False', 'quiet': 'False', 'no_print': 'None', 'log_format': 'default', 'static_parser': 'True', 'invocation_command': 'dbt run --select timeline_segments mrt_location_stays --full-refresh', 'introspect': 'True', 'target_path': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'send_anonymous_usage_stats': 'True'}
+[0m21:56:12.878740 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m21:56:12.878986 [debug] [MainThread]: Resource report: {"command_name": "run", "command_success": false, "command_wall_clock_time": 0.035508126, "process_in_blocks": "0", "process_kernel_time": 0.12425, "process_mem_max_rss": "109002752", "process_out_blocks": "0", "process_user_time": 0.497003}
+[0m21:56:12.879173 [debug] [MainThread]: Command `dbt run` failed at 21:56:12.879138 after 0.04 seconds
+[0m21:56:12.879291 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109c17920>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d930b0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109d930e0>]}
+[0m21:56:12.879404 [debug] [MainThread]: Flushing usage events
+[0m21:56:15.106603 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m11:50:45.392994 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10973a810>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c065ca0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c0655b0>]}
+
+
+============================== 11:50:45.395313 | 4cbac897-e7e8-4d2d-a68d-83538a243bb6 ==============================
+[0m11:50:45.395313 [info ] [MainThread]: Running with dbt=1.10.8
+[0m11:50:45.395516 [debug] [MainThread]: running dbt with arguments {'printer_width': '80', 'indirect_selection': 'eager', 'write_json': 'True', 'log_cache_events': 'False', 'partial_parse': 'True', 'cache_selected_only': 'False', 'warn_error': 'None', 'fail_fast': 'False', 'version_check': 'True', 'log_path': 'logs', 'debug': 'False', 'profiles_dir': '.', 'use_colors': 'True', 'use_experimental_parser': 'False', 'empty': 'False', 'quiet': 'False', 'no_print': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'static_parser': 'True', 'log_format': 'default', 'introspect': 'True', 'target_path': 'None', 'invocation_command': 'dbt build --select int_aw_categorized+ --profiles-dir . --threads 1 --vars reprocess_days: 14', 'send_anonymous_usage_stats': 'True'}
+[0m11:50:45.395722 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m11:50:45.395952 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.030001458, "process_in_blocks": "0", "process_kernel_time": 0.111396, "process_mem_max_rss": "109166592", "process_out_blocks": "0", "process_user_time": 0.445251}
+[0m11:50:45.396133 [debug] [MainThread]: Command `dbt build` failed at 11:50:45.396097 after 0.03 seconds
+[0m11:50:45.396264 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bd60ec0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c0658e0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10c0667b0>]}
+[0m11:50:45.396369 [debug] [MainThread]: Flushing usage events
+[0m11:50:46.131720 [debug] [MainThread]: An error was encountered while trying to flush usage events
+[0m08:14:07.900822 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109730710>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bef98e0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bef9490>]}
+
+
+============================== 08:14:07.903154 | 99f4c6cd-6c3b-4e86-b3c6-b6f9783fded8 ==============================
+[0m08:14:07.903154 [info ] [MainThread]: Running with dbt=1.10.8
+[0m08:14:07.903367 [debug] [MainThread]: running dbt with arguments {'printer_width': '80', 'indirect_selection': 'eager', 'log_cache_events': 'False', 'write_json': 'True', 'partial_parse': 'True', 'cache_selected_only': 'False', 'warn_error': 'None', 'fail_fast': 'False', 'profiles_dir': '/Users/tig/.dbt', 'log_path': 'logs', 'debug': 'False', 'version_check': 'True', 'use_colors': 'True', 'use_experimental_parser': 'False', 'empty': 'False', 'quiet': 'False', 'no_print': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'invocation_command': 'dbt build --select int_aw_categorized', 'introspect': 'True', 'static_parser': 'True', 'target_path': 'None', 'log_format': 'default', 'send_anonymous_usage_stats': 'True'}
+[0m08:14:07.903605 [error] [MainThread]: Encountered an error:
+Runtime Error
+  No dbt_project.yml found at expected path /Users/tig/workspace/home_server/prefect-workflow/life_dashboard/dbt_project.yml
+  Verify that each entry within packages.yml (and their transitive dependencies) contains a file named dbt_project.yml
+  
+[0m08:14:07.903815 [debug] [MainThread]: Resource report: {"command_name": "build", "command_success": false, "command_wall_clock_time": 0.029188417, "process_in_blocks": "0", "process_kernel_time": 0.094423, "process_mem_max_rss": "108871680", "process_out_blocks": "0", "process_user_time": 0.414009}
+[0m08:14:07.903992 [debug] [MainThread]: Command `dbt build` failed at 08:14:07.903961 after 0.03 seconds
+[0m08:14:07.904113 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10b847260>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bc64a10>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x10bef9820>]}
+[0m08:14:07.904222 [debug] [MainThread]: Flushing usage events
+[0m08:14:08.705004 [debug] [MainThread]: An error was encountered while trying to flush usage events

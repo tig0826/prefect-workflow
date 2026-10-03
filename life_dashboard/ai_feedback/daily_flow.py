@@ -28,6 +28,7 @@ from prefect.blocks.system import Secret
 
 from ai_feedback import issue_tracker as it
 from ai_feedback.ai_feedback_flow import fetch_context
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -65,7 +66,7 @@ STABILIZE_LOW_CAL = 900.0
 MIN_WAKE_SESSION_MIN = 60
 
 
-@task(name="Detect wake-up", retries=2, retry_delay_seconds=30)
+@task(name="Detect wake-up", **STORAGE_RETRY)
 def detect_wake(target_date: str) -> dict:
     """今朝までに終わった睡眠セッションから起床を検知する。
 
@@ -102,7 +103,7 @@ def detect_wake(target_date: str) -> dict:
     }
 
 
-@task(name="Check feedback already exists")
+@task(name="Check feedback already exists", **STORAGE_RETRY)
 def already_generated(target_date: str) -> bool:
     df = TRINO.execute_query(f"""
         SELECT count(*) AS n FROM iceberg.life_gold.ai_feedback
@@ -114,7 +115,7 @@ def already_generated(target_date: str) -> bool:
 # ─────────────────────────────────────────────────────────────
 # コンテキスト構築
 # ─────────────────────────────────────────────────────────────
-@task(name="Fetch last night sleep")
+@task(name="Fetch last night sleep", **STORAGE_RETRY)
 def fetch_last_night(night_date: str) -> dict:
     """今朝までの睡眠（＝昨夜の睡眠）を取る。
 
@@ -158,7 +159,7 @@ def fetch_last_night(night_date: str) -> dict:
     }
 
 
-@task(name="Fetch overnight phone signals")
+@task(name="Fetch overnight phone signals", **STORAGE_RETRY)
 def fetch_overnight_unlocks(night_date: str) -> dict:
     """昨夜（今日の0-6時）の解錠。睡眠中断の物証。
 
@@ -179,7 +180,7 @@ def fetch_overnight_unlocks(night_date: str) -> dict:
     }
 
 
-@task(name="Fetch last night sleep stages")
+@task(name="Fetch last night sleep stages", **STORAGE_RETRY)
 def fetch_last_night_stages(night_date: str) -> dict:
     """昨夜の睡眠段階（Fitbit v1.2）と、覚醒区間中の解錠。
 
@@ -230,7 +231,7 @@ def fetch_last_night_stages(night_date: str) -> dict:
     }
 
 
-@task(name="Fetch recovery signals")
+@task(name="Fetch recovery signals", **STORAGE_RETRY)
 def fetch_recovery(night_date: str) -> dict:
     """HRV・呼吸数・SpO2・皮膚温。**3つ以上揃った日だけ渡す。**
 
@@ -276,7 +277,7 @@ def fetch_recovery(night_date: str) -> dict:
     }
 
 
-@task(name="Fetch awake span activity")
+@task(name="Fetch awake span activity", **STORAGE_RETRY)
 def fetch_awake_span(span_start: str, span_end: str) -> dict:
     """「前日の朝〜今朝の起床まで」を**1つの連続した区間**として活動を拾う。
 
@@ -341,7 +342,7 @@ def fetch_awake_span(span_start: str, span_end: str) -> dict:
     }
 
 
-@task(name="Detect previous wake")
+@task(name="Detect previous wake", **STORAGE_RETRY)
 def detect_previous_wake(span_end: str) -> str:
     """前回の起床時刻（＝区間の始まり）を返す。取れなければ前日06:00。"""
     df = TRINO.execute_query(f"""
@@ -359,7 +360,7 @@ def detect_previous_wake(span_end: str) -> str:
     return fallback.strftime("%Y-%m-%d %H:%M:%S")
 
 
-@task(name="Fetch phone signals")
+@task(name="Fetch phone signals", **STORAGE_RETRY)
 def fetch_phone_signals(analysis_date: str) -> dict:
     """解錠回数から注意の断片化を取る。本人が自分では数えられない数字。"""
     df = TRINO.execute_query(f"""
@@ -382,7 +383,7 @@ def fetch_phone_signals(analysis_date: str) -> dict:
     }
 
 
-@task(name="Fetch cat_sub level activity")
+@task(name="Fetch cat_sub level activity", **STORAGE_RETRY)
 def fetch_activity_detail(analysis_date: str) -> dict:
     """cat_sub 粒度・priority 抑制なしの活動。睡眠と画面の重なりが見える。
 
@@ -691,7 +692,17 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
     # 同じ実行内で評価まで進めないと baseline と評価日がずれる。
     it.revive_untested()
 
+    # 本人が「閉じてよい」と言ったチケット（司書が req:close を付けたもの）を閉じる。
+    # ★評価より先に走らせる★ 閉じたものを今日の実況に載せないため。
+    # GitHub の失敗で日次FB全体を止めない。
+    closed_today: list[dict] = []
+    try:
+        closed_today += it.process_close_requests()
+    except Exception as ex:  # noqa: BLE001
+        print(f"⚠️ close 依頼の処理に失敗: {ex}")
+
     # 進行中の課題と、その metric が実際にどう動いたか
+    # （verifying も評価はする。実況するのは下で open/testing に絞ったものだけ）
     evaluated = it.evaluate_all_issues(eval_date)
     # ★戻り値には abandoned と untested の両方が入る★
     # 「反証された」と「一度も試していない」を混ぜて報告すると、
@@ -763,6 +774,30 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
         done = {g["issue_id"] for g in graduated}
         ctx["active_issues"] = [a for a in ctx["active_issues"] if a["issue_id"] not in done]
 
+    # ★2026-10-03: チケットの出口★
+    # verifying を「閉じる / testing に戻す」に仕分ける。以前は verifying が行き止まりで、
+    # 18件の仮説が1件も close されていなかった。
+    # 棄却（abandoned）は自動で閉じない。今の棄却判定は「打ち手でない介入」でも
+    # 成立してしまう（#13）ので、閉じると誤った反証が確定してしまう。本人が判断する。
+    regressed: list[dict] = []
+    try:
+        verified, regressed = it.enforce_verification(evaluated)
+        closed_today += [
+            {"issue_id": v["issue_id"], "title": v["title"], "close_kind": "verified"}
+            for v in verified
+        ]
+    except Exception as ex:  # noqa: BLE001
+        print(f"⚠️ verifying の判定に失敗: {ex}")
+    if closed_today:
+        ctx["closed_today"] = closed_today
+    if regressed:
+        ctx["regressed_today"] = [
+            {"issue_id": r["issue_id"], "title": r["title"], "metric": r.get("metric_name")}
+            for r in regressed
+        ]
+    # チケット上の「指標の推移」を最新にする（以前は 9/1 で止まっていた）
+    it.sync_metric_comments(evaluated)
+
     # 同じ領域ばかり語らないための材料（詳細は pick_under_covered の説明を参照）
     ctx["recent_feedback_history"] = fetch_recent_feedback(day_date)
     ctx["under_covered_domains"] = pick_under_covered(ctx)
@@ -799,7 +834,10 @@ _OBVIOUS_PROMPT = """\
 
 
 _MAIN_PROMPT_HEADER = """\
-あなたはユーザー専属のライフアナリストです。1日1回、朝に届くフィードバックを書きます。
+あなたはユーザー専属のライフアナリストで、医学・心理学・カウンセリングの専門知識を持つ。
+1日1回、朝に届くフィードバックを書きます。
+★2026-09-30追加★ 本人の指示:「前提として、医学や心理学、カウンセリングなどの専門家として
+振る舞ってほしい」。「8. 知識に基づく指摘」で使う一般知見は、この専門性を土台にすること。
 
 ## このフィードバックの役割
 
@@ -900,9 +938,13 @@ BROWSING の増減を「逃避が増えた/減った」と解釈してはいけ�
 ### 8. 知識に基づく指摘
 
 `metric_deviations` に、直近3日が過去28日の分布から外れている指標が入っています。
-本人のデータだけでは新しく言えることが無い日は、**これらを起点に、
-科学・医療・健康の一般知見で意味づけした指摘**を出してよいです。
-本人が自分のデータから読み取れない「それが何を意味するか」を補うのが目的です。
+★2026-09-30修正★ 以前は「本人のデータだけでは新しく言えることが無い日は」という
+条件付きで、知識に基づく指摘を**データが尽きた時の代替**としてしか許していなかった。
+本人の指摘:「仮説についてはデータだけではなく、医学や化学に基づいた知識からでも良い。
+私が知らなそうなアプローチや知見からの評価をしてもらえると良い」。
+**知識に基づく指摘は、データが尽きた日の代替ではなく、それ自体で価値のある選択肢。**
+`metric_deviations` を起点にしてもよいし、本人の状況（課題一覧・直近の訴え）から
+連想する医学・化学・栄養学などの知見を起点にしてもよい。
 
 守ること:
 - **一般知見であることを明示する。** 本人のデータから導いた結論のように書かない
@@ -914,7 +956,12 @@ BROWSING の増減を「逃避が増えた/減った」と解釈してはいけ�
 - JSONキー名・変数名の出力
 - 数値の羅列
 - 存在しないデータへの言及（「〇〇のデータがありません」）
-- 一般論（このユーザーのデータに根拠を置かない助言）
+- **ふわっとした一般論**（「バランスよく食べましょう」「睡眠は大切です」のように、
+  本人の状況にも一般知見にも接地しない、誰にでも当てはまる言い回し）。
+  ★2026-09-30修正★ 以前はここを「このユーザーのデータに根拠を置かない助言」と
+  書いていたが、それだと上の8番で明示的に許可している「一般知見で意味づけした指摘」
+  まで禁止対象に読めてしまい、8番と矛盾していた。禁止したいのは中身の無い言い回しで、
+  8番のように一般知見であると明示した上での具体的な指摘は禁止ではない
 """
 
 _MODE_OPTIMIZE = """\
@@ -932,7 +979,8 @@ _MODE_OPTIMIZE = """\
 2. **今日固有の事実、または知識に基づく指摘（1件）**
    **本人が自分では数えられない数字**を使ってください。
    どの領域から採るかは `under_covered_domains` に従い、直近で触れていない領域を
-   優先します。材料が無ければ `metric_deviations` を起点に制約8の形で書いてください。
+   優先します。`metric_deviations` を起点にしてもよいし、制約8の通り、
+   医学・化学などの一般知見を起点にしてもよい（データが尽きた時の代替ではない）。
 
    ここで扱う領域は毎日変わるのが正常です。同じ領域が続いているなら、
    それは材料が尽きている合図なので、別の領域に移ってください。
@@ -964,6 +1012,14 @@ _MODE_OPTIMIZE = """\
 ただし**課題が解決したとは言わないこと。** 示されたのは「打った手が効いた」ことだけで、
 親の課題が動いたかは別の問題です。効果が別の行動に移っただけの可能性が残ります。
 以後の関心が親の課題に移ることを伝えてください。
+
+`closed_today` があれば、そのチケットを閉じたことを1文ずつ伝えてください。
+`close_kind` で理由が違います: `requested`=本人が会話で「閉じてよい」と言った /
+`verified`=卒業後も2週間目標を満たし続けた。
+`verified` でも**親の課題が解決したとは言わないこと**（理由は上の graduated_today と同じ）。
+
+`regressed_today` があれば、一度卒業した仮説の指標が後戻りしたので
+検証中に戻したことを1文で伝えてください。責めるのではなく、事実として。
 
 `untested_today` があれば、それは**外れた仮説ではなく、一度も試していない仮説**です。
 「効果がなかった」と言ってはいけません。「この筋は試す価値があるが、まだ何も打っていない」
@@ -1062,7 +1118,7 @@ def generate_daily(ctx: dict, api_key: str) -> tuple[list[dict], list[str]]:
     return _extract_json(r2.text), obvious
 
 
-@task(name="Save daily feedback")
+@task(name="Save daily feedback", **STORAGE_RETRY)
 def save_daily(target_date: str, messages: list[dict], ctx: dict) -> None:
     import pandas as pd
 

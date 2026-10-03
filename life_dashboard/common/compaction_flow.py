@@ -11,6 +11,7 @@ support EXECUTE optimize.
 """
 import logging
 from prefect import flow, task
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 log = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ TRINO = TrinoAPI(host="trino.mynet", port=80, user="tig", catalog="iceberg")
 TARGET_SCHEMAS = ["life_silver", "life_gold"]
 
 
-@task(name="Discover Iceberg tables")
+@task(name="Discover Iceberg tables", **STORAGE_RETRY)
 def discover_tables() -> list[tuple[str, str]]:
     """List base tables in the target schemas, skipping dbt transient temp tables.
 
@@ -69,7 +70,7 @@ def _execute(action: str, sql: str, schema: str, table: str) -> bool:
         raise
 
 
-@task(name="Maintain Iceberg table", retries=2, retry_delay_seconds=30)
+@task(name="Maintain Iceberg table", **STORAGE_RETRY)
 def maintain_table(schema: str, table: str, reclaim: bool = False):
     """optimize (always) -> expire_snapshots + remove_orphan_files (only if reclaim).
 

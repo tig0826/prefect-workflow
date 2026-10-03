@@ -209,11 +209,17 @@ def load_problems() -> list[dict]:
     return sorted(out, key=lambda x: (x["severity"] or "S9", x["priority"] or "P9"))
 
 
-def load_active_hypotheses() -> list[dict]:
-    """検証中の仮説（life:hypothesis で open かつ status が open/testing）。
+def load_active_hypotheses(statuses: tuple[str, ...] = ("open", "testing")) -> list[dict]:
+    """評価対象の仮説（life:hypothesis で open かつ status が statuses のどれか）。
 
-    `untested` は「介入を打っていないので未検証」であり active に含めない
+    既定は open/testing（＝日次で実況する対象）。
+    `untested` は「介入を打っていないので未検証」であり含めない
     （繰り返しを止めるため）。ただし棄却とは意味が違う。
+
+    ★2026-10-03: statuses を引数にした★
+    verifying（目標を連続達成して実況から外れた仮説）も指標の評価だけは続けないと、
+    「安定したので閉じる」「後戻りしたので testing に戻す」が判定できない。
+    実況の対象と評価の対象を分けるために、呼び出し側で選ばせる。
     """
     rows = _call(f"/repos/{REPO}/issues?labels=life:hypothesis&state=open&per_page=100")
     parents = parent_map()
@@ -222,7 +228,7 @@ def load_active_hypotheses() -> list[dict]:
         if i.get("pull_request"):
             continue
         status = _label_value(i, "status:") or "open"
-        if status not in ("open", "testing"):
+        if status not in statuses:
             continue
         metric = parse_metric(i.get("body") or "")
         if not metric:
@@ -312,6 +318,66 @@ def set_status_label(number: int, status: str, note: str | None = None) -> None:
     _call(f"/repos/{REPO}/issues/{number}/labels", "POST", {"labels": [f"status:{status}"]})
     if note:
         comment(number, note)
+
+
+CLOSE_REQUEST_LABEL = "req:close"
+
+
+def close_issue(number: int, reason: str, note: str | None = None) -> None:
+    """issue を閉じる。**日次フローだけが呼ぶ。**
+
+    reason: "completed"（解決・検証完了・本人の判断）/ "not_planned"（棄却）
+
+    ★close の権限★
+    close できるのは人間・CLI と日次フローだけ。ダッシュボード（チャットと司書）は
+    close を実装しない。司書にできるのは「本人が閉じてよいと言った」という依頼を
+    `req:close` ラベルで残すことまでで、実行は日次フローが process_close_requests で行う。
+    「チャットは提案、パイプラインが決定」という分担を崩さずに、本人の決定を確実に通すため。
+
+    閉じるときは `req:close` を外す。外さないと、本人が reopen した翌朝に
+    また自動で閉じてしまう。
+    """
+    if reason not in ("completed", "not_planned"):
+        raise ValueError(f"reason は completed / not_planned のみ: {reason!r}")
+    if note:
+        comment(number, note)
+    try:
+        _call(f"/repos/{REPO}/issues/{number}/labels/{CLOSE_REQUEST_LABEL}", "DELETE")
+    except Exception:
+        pass  # 付いていなければ 404。問題ない
+    _call(
+        f"/repos/{REPO}/issues/{number}",
+        "PATCH",
+        {"state": "closed", "state_reason": reason},
+    )
+
+
+def load_close_requests() -> list[dict]:
+    """本人が「閉じてよい」と言った（司書が req:close を付けた）open の issue。種類は問わない。"""
+    rows = _call(
+        f"/repos/{REPO}/issues?labels={CLOSE_REQUEST_LABEL}&state=open&per_page=100"
+    )
+    return [
+        {"number": i["number"], "title": i["title"], "labels": _labels(i)}
+        for i in rows or []  # type: ignore[union-attr]
+        if not i.get("pull_request")
+    ]
+
+
+def upsert_comment(number: int, prefix: str, body: str) -> None:
+    """本文が prefix で始まるコメントがあれば書き換え、無ければ新しく足す。
+
+    ★毎日コメントを足さない★
+    指標の推移のように毎日変わるものを追記で積むと、コメント欄が数字で埋まって
+    本人にも司書にも読めなくなる。1つのコメントを上書きし続ける。
+    """
+    rows = _call(f"/repos/{REPO}/issues/{number}/comments?per_page=100")
+    for c in rows or []:  # type: ignore[union-attr]
+        if str(c.get("body") or "").startswith(prefix):
+            if c.get("body") != body:
+                _call(f"/repos/{REPO}/issues/comments/{c['id']}", "PATCH", {"body": body})
+            return
+    comment(number, body)
 
 
 def bump_mention(number: int) -> int:
