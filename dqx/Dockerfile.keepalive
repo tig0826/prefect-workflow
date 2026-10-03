@@ -1,0 +1,14 @@
+FROM mcr.microsoft.com/playwright/python:v1.49.0-noble
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/opt/prefect:$PYTHONPATH"
+
+WORKDIR /opt/prefect
+
+RUN pip install --no-cache-dir "prefect==3.1.11" "playwright==1.49.0"
+
+RUN playwright install chromium
+
+COPY keepalive_streamlit/keepalive_streamlit.py /opt/prefect/keepalive_streamlit/keepalive_streamlit.py
+
+LABEL io.prefect.version="3.1.11"

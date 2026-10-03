@@ -3,7 +3,7 @@ from prefect import flow
 from prefect_dbt import PrefectDbtRunner, PrefectDbtSettings
 
 
-@flow(retries=3, retry_delay_seconds=60)
+@flow(retries=3, retry_delay_seconds=60, timeout_seconds=600)
 def get_price_mart():
     PrefectDbtRunner(
         settings=PrefectDbtSettings(

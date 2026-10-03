@@ -25,7 +25,7 @@ def get_secret_updated_at(secret_name: str):
     return asyncio.run(_fetch())
 
 
-@flow(name="monitor dqx cookie secret age")
+@flow
 def notify_cookie_expiration():
     logger = get_run_logger()
 
