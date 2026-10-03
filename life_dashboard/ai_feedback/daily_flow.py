@@ -730,12 +730,14 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
             "is_moving": e["is_moving"],
             "mention_count": e["mention_count"],
             "eval_error": e["eval_error"],
-            "history": [
-                {"d": h["eval_date"], "v": h["metric_value"]}
-                for h in (e.get("history") or []) if h.get("metric_value") is not None
-            ][-14:],
+            # 打った手（子の life:action）が付いているか。付いていない仮説は
+            # 言及4回で untested に沈むので、その前に本人へ試すかを聞く材料にする。
+            "has_action": (e.get("n_actions") or 0) > 0,
+            "action_candidate": e.get("action_candidate"),
+            # 日付で重複を除いた履歴（同じ日に複数回評価されることがある）
+            "history": [{"d": d, "v": v} for d, v in it.daily_values(e.get("history"))][-14:],
         }
-        for e in evaluated if e["status"] in ("open", "testing")
+        for e in evaluated if e["status"] in it.NARRATED_STATUSES
     ]
     if abandoned:
         ctx["abandoned_today"] = [
@@ -768,7 +770,9 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
         ctx["graduated_today"] = [
             {"issue_id": g["issue_id"], "title": g["title"],
              "metric": g.get("metric_name"), "streak": g.get("graduation_streak"),
-             "parent": g.get("parent")}
+             "parent": g.get("parent"),
+             # 打った手なしで自然に届いたもの（untested からの卒業）
+             "natural": g.get("graduated_from") == "untested"}
             for g in graduated
         ]
         done = {g["issue_id"] for g in graduated}
@@ -795,6 +799,14 @@ def build_daily_context(day_date: str, night_date: str, eval_date: str) -> dict:
             {"issue_id": r["issue_id"], "title": r["title"], "metric": r.get("metric_name")}
             for r in regressed
         ]
+    # 検証完了で閉じた仮説の後戻りを見張る。後戻りしていたら元の issue を再開する
+    # （閉じると評価が止まり、後で週次が同じ仮説を新規に起票し直してしまうため）。
+    try:
+        reopened = it.watch_verified_regressions(eval_date)
+        if reopened:
+            ctx["reopened_today"] = reopened
+    except Exception as ex:  # noqa: BLE001
+        print(f"⚠️ 閉じた仮説の後戻り判定に失敗: {ex}")
     # チケット上の「指標の推移」を最新にする（以前は 9/1 で止まっていた）
     it.sync_metric_comments(evaluated)
 
@@ -1020,6 +1032,19 @@ _MODE_OPTIMIZE = """\
 
 `regressed_today` があれば、一度卒業した仮説の指標が後戻りしたので
 検証中に戻したことを1文で伝えてください。責めるのではなく、事実として。
+
+`reopened_today` があれば、検証完了で閉じた仮説が後戻りしたので**同じ issue を再開した**ことを
+1文で伝えてください。新しい発見のようには言わないこと（前に一度効いていたもの）。
+
+`graduated_today` の `natural: true` は、打った手なしで指標が目標に届いたものです。
+「自然に良くなった」と伝え、何が効いたか本人に思い当たることがあれば教えてほしいと添えてください。
+
+`active_issues` の `has_action: false` は、まだ何も打っていない仮説です
+（言及が4回に達すると未検証として実況から外れ、そのまま埋もれます）。
+`action_candidate` があるものから **1回のFBで1件まで**、
+「この打ち手を試しますか？試すならチャットで『#番号 を試す』と言ってください」と短く問いかけてください。
+押し付けず、試さない選択も自然にできる言い方にすること。同じ仮説を続けて聞かない
+（`recent_feedback_history` を見て判断）。`action_candidate` が無いものは、打ち手を1つ具体的に添えてよい。
 
 `untested_today` があれば、それは**外れた仮説ではなく、一度も試していない仮説**です。
 「効果がなかった」と言ってはいけません。「この筋は試す価値があるが、まだ何も打っていない」
