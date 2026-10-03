@@ -2,3 +2,11 @@ __pycache__/
 poetry.lock
 .DS_Store
 life_dashboard/data
+
+# ★7.9GB のDBダンプを誤ってコミットして push が GH001 で拒否された（2026-09-04）★
+# 作業ツリーに置いたままにするので、git には入れない。
+*-before-replica-rebuild.sql
+core-db-*.sql
+
+# dbt のログは成果物ではない
+**/logs/dbt.log
