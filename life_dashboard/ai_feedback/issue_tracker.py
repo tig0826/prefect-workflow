@@ -44,8 +44,15 @@ REGRESSION_DAYS = 3
 
 # 日次で指標を評価する仮説の status。実況するのは open/testing だけで、
 # verifying は「閉じるか戻すか」を判定するためだけに評価を続ける。
-EVALUATED_STATUSES = ("open", "testing", "verifying")
+# ★2026-10-03: untested も評価する★ 打った手が無くても自然に目標へ届くことがある
+# （実例: #9 主睡眠 238→380分/目標360 が untested のまま誰にも気づかれなかった）。
+# 評価だけ続け、実況はしない。目標を続けて満たせば卒業させる。
+EVALUATED_STATUSES = ("open", "testing", "verifying", "untested")
 NARRATED_STATUSES = ("open", "testing")
+GRADUATABLE_STATUSES = ("open", "testing", "untested")
+
+# 検証完了で close した仮説を、閉じた後も何日見張るか（後戻りしたら再開する）。
+WATCH_AFTER_CLOSE_DAYS = 60
 
 # metric が「動いた」と見なす最小変化率。測定ノイズを改善と誤読しないため。
 MIN_MEANINGFUL_CHANGE_PCT = 10.0
@@ -129,6 +136,8 @@ def load_active_issues() -> list[dict]:
                 "target_direction": h["target_direction"],
                 "mention_count": h["mention_count"],
                 "parent": h.get("parent"),
+                "action_candidate": h.get("action_candidate"),
+                "n_actions": h.get("n_actions"),
             }
         )
     return rows
@@ -393,7 +402,8 @@ def create_issue(title: str, hypothesis: str, discovered_by: str, evidence: dict
                  metric_sql: str, metric_name: str, metric_unit: str,
                  baseline_value: float, target_value: float, target_direction: str,
                  opened_date: str | None = None, status: str = "open",
-                 notes: str | None = None, parent_number: int | None = None) -> str:
+                 notes: str | None = None, parent_number: int | None = None,
+                 action_candidate: str | None = None) -> str:
     """新しい仮説を GitHub に起票する。metric_sql が空なら例外。
 
     ここで metric を強制することが「浅いアドバイス」を機械的に殺す仕掛け。
@@ -460,6 +470,15 @@ mention_count: 0
 **測り方が違うと思ったら SQL を直してください。** `<!-- metric -->` の
 baseline / target / direction も同時に直すこと（機械が読むのはそちら）。</sub>
 """
+    if action_candidate:
+        # ★打ち手の候補★ 週次は仮説だけ起票し、打った手は作らない（本人が決めていないものを
+        # 「打った」と記録すると未検証と反証が区別できなくなる）。代わりに候補を本文に置き、
+        # 日次FBが「試すか」を聞く。本人がチャットで「#N を試す」と言えば司書が打った手を起票する。
+        body += (
+            f"\n## 打ち手の候補\n{action_candidate.strip()}\n\n"
+            "<sub>まだ打っていない。試すと決めたら、ダッシュボードのチャットで"
+            "「#この番号 を試す」と言えば打った手として記録される。</sub>\n"
+        )
     if notes:
         body += f"\n## 補足\n{notes}\n"
 
@@ -695,10 +714,13 @@ def enforce_graduation(evaluated: list[dict]) -> list[dict]:
     （VERIFY_DAYS_BEFORE_CLOSE 日連続で安定 → close / 後戻り → testing）。
 
     ★2026-10-03: 履歴の読み方のバグを直した★ daily_values の説明を参照。
+
+    ★2026-10-03: untested も卒業させる★ 打った手が無くても指標が目標に届いたなら、
+    その時点で「自然に解消した」と記録して実況・評価の対象を整理する。
     """
     graduated = []
     for e in evaluated:
-        if e.get("status") not in NARRATED_STATUSES:
+        if e.get("status") not in GRADUATABLE_STATUSES:
             continue
         # 履歴の末尾から連続で目標を満たしている日数を数える。
         # 単日の達成で卒業させると、ノイズで上振れした日に誤って外れる。
@@ -707,19 +729,34 @@ def enforce_graduation(evaluated: list[dict]) -> list[dict]:
             continue
         target = e.get("target_value")
 
+        natural = e.get("status") == "untested"
+        head = (
+            "[auto] 打った手は付いていない（untested）が、" if natural else "[auto] "
+        )
+        natural_note = (
+            "打ち手なしで自然に目標へ届いた。何が効いたかは分からないので、"
+            "思い当たる変化があればコメントに残すこと。\n\n" if natural else ""
+        )
+        effect_note = (
+            "**指標が目標に届いたことは示されたが、親の課題が解決したとは限らない。**"
+            if natural else
+            "**打った手が効いたことは示されたが、親の課題が解決したとは限らない。**"
+        )
         note = (
-            f"[auto] metric「{e.get('metric_name')}」が目標 {target} を "
+            f"{head}metric「{e.get('metric_name')}」が目標 {target} を "
             f"{streak}日連続で満たしたため、この仮説の検証は完了とみなす。"
             f"baseline {e.get('baseline_value')} → 現在 {e.get('current_value')}。\n\n"
-            f"**打った手が効いたことは示されたが、親の課題が解決したとは限らない。**"
+            f"{natural_note}"
+            f"{effect_note}"
             f"以後の問いは「この指標が目標に届いたか」ではなく"
             f"「親の課題が動いたか」に切り替える。"
             f"親が動いていなければ、効果が別の行動に移っただけの可能性がある。\n\n"
             f"この仮説は日次の実況から外れる。指標の評価は続け、"
             f"{VERIFY_DAYS_BEFORE_CLOSE}日連続で目標を満たし続けたら自動で close、"
-            f"直近{REGRESSION_DAYS}日すべてで目標を外したら testing に戻す。"
+            f"直近{REGRESSION_DAYS}日すべてで目標を外したら実況に戻す。"
         )
         set_status(e["issue_id"], "verifying", note)
+        e["graduated_from"] = e.get("status")
         e["status"] = "verifying"
         e["graduated_now"] = True  # 同じ実行で enforce_verification に閉じさせない
         e["graduation_note"] = note
@@ -767,6 +804,9 @@ def enforce_verification(evaluated: list[dict]) -> tuple[list[dict], list[dict]]
                 f"課題そのものが解決したかは課題の側で判断する。"
                 f"後で同じ問題がぶり返したら、この issue を reopen して status を testing に戻すこと。"
             )
+            # status:verified を付けてから閉じる。閉じた後の後戻りの見張り
+            # （watch_verified_regressions）は、このラベルで「機械が検証完了で閉じた」ものを選ぶ。
+            set_status(e["issue_id"], "verified")
             gt.close_issue(int(e["issue_id"]), "completed", note)
             e["status"] = "closed"
             e["close_kind"] = "verified"
@@ -776,16 +816,57 @@ def enforce_verification(evaluated: list[dict]) -> tuple[list[dict], list[dict]]
 
         recent = vals[-REGRESSION_DAYS:]
         if len(recent) == REGRESSION_DAYS and not any(_meets(v, target, direction) for _, v in recent):
+            # 打った手があれば testing（検証中）、無ければ open に戻す。
+            # 打った手の無いものを testing にすると、棄却も未検証化もされず永久に実況される。
+            back = "testing" if (e.get("n_actions") or 0) > 0 else "open"
             note = (
                 f"[auto] verifying の後、metric「{e.get('metric_name')}」が直近{REGRESSION_DAYS}日すべてで"
                 f"目標 {target} を外した（{', '.join(f'{d}: {v}' for d, v in recent)}）。"
-                f"効果が後戻りした可能性があるので testing に戻し、日次の実況を再開する。"
+                f"効果が後戻りした可能性があるので {back} に戻し、日次の実況を再開する。"
             )
-            set_status(e["issue_id"], "testing", note)
-            e["status"] = "testing"
+            set_status(e["issue_id"], back, note)
+            e["status"] = back
             print(f"↩️ regressed {e['issue_id']}: {e.get('title')}")
             regressed.append(e)
     return closed, regressed
+
+
+def watch_verified_regressions(eval_date: str) -> list[dict]:
+    """検証完了で close した仮説が後戻りしていないか見張り、後戻りしていたら再開する。
+
+    ★なぜ必要か★
+    close すると指標の評価が止まる。後戻りしても誰も気づかず、そのうち週次が
+    同じ仮説を「新しい発見」として起票し直す。閉じた後も WATCH_AFTER_CLOSE_DAYS 日は
+    評価を続け、直近 REGRESSION_DAYS 日すべてで目標を外したら元の issue を開け直す。
+    本人の close 依頼で閉じたもの（status:verified を持たない）は対象外。
+    """
+    out = []
+    for h in gt.load_recently_verified(days=WATCH_AFTER_CLOSE_DAYS):
+        issue_id = str(h["number"])
+        try:
+            value, error = evaluate_metric(h, eval_date)
+            record_metric(issue_id, eval_date, value, None, error)
+            vals = daily_values(metric_history(issue_id, days=28))
+        except Exception as ex:  # noqa: BLE001
+            print(f"⚠️ #{issue_id} の後戻り判定に失敗: {ex}")
+            continue
+        target, direction = h.get("target_value"), h.get("target_direction")
+        if target is None or direction not in ("decrease", "increase"):
+            continue
+        recent = vals[-REGRESSION_DAYS:]
+        if len(recent) < REGRESSION_DAYS or any(_meets(v, target, direction) for _, v in recent):
+            continue
+        back = "testing" if (h.get("n_actions") or 0) > 0 else "open"
+        gt.reopen_issue(
+            h["number"],
+            back,
+            f"[auto] 検証完了で閉じた後、metric「{h.get('metric_name')}」が直近{REGRESSION_DAYS}日すべてで"
+            f"目標 {target} を外した（{', '.join(f'{d}: {v}' for d, v in recent)}）。"
+            f"後戻りなので、新しい仮説を立てるのではなくこの issue を再開する（{back}）。",
+        )
+        print(f"🔁 reopened #{issue_id}: {h.get('title')}")
+        out.append({"issue_id": issue_id, "title": h["title"], "metric": h.get("metric_name")})
+    return out
 
 
 def process_close_requests() -> list[dict]:

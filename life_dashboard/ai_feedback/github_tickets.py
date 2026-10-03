@@ -241,9 +241,102 @@ def load_active_hypotheses(statuses: tuple[str, ...] = ("open", "testing")) -> l
                 "body": i.get("body") or "",
                 "status": status,
                 "parent": parents.get(i["number"]),
+                "action_candidate": parse_action_candidate(i.get("body") or ""),
+                "n_actions": _count_children(i),
                 **metric,
             }
         )
+    return out
+
+
+_ACTION_CANDIDATE = re.compile(r"^## 打ち手の候補\s*\n(.*?)(?=^## |\Z)", re.DOTALL | re.MULTILINE)
+
+
+def parse_action_candidate(body: str) -> str | None:
+    """本文の「## 打ち手の候補」節を取り出す（週次が起票時に書く）。無ければ None。"""
+    m = _ACTION_CANDIDATE.search(body or "")
+    if not m:
+        return None
+    # 本文に添えている案内（<sub>…</sub>）は候補そのものではないので落とす
+    text = "\n".join(l for l in m.group(1).splitlines() if not l.strip().startswith("<sub>")).strip()
+    return text[:400] or None
+
+
+def _count_children(issue: dict) -> int:
+    """仮説の子（＝打った手）の数。一覧 API の sub_issues_summary を使い、無ければ1件ずつ引く。"""
+    summary = issue.get("sub_issues_summary")
+    if isinstance(summary, dict) and "total" in summary:
+        return int(summary.get("total") or 0)
+    try:
+        return len(_call(f"/repos/{REPO}/issues/{issue['number']}/sub_issues") or [])  # type: ignore[arg-type]
+    except Exception:
+        return 0
+
+
+def load_hypotheses_history(days: int = 180) -> list[dict]:
+    """「もう扱った」仮説の一覧。週次が同じ仮説を出し直さないために渡す。
+
+    ★なぜ必要か★
+    週次の重複チェックは active（open/testing）しか見ていなかった。
+    untested・verifying・abandoned・close 済みは見えないので、
+    検証が済んだ仮説や放置中の仮説と同じものを新規に起票しうる。
+
+    返すもの: open のうち status が untested/verifying/abandoned のもの +
+              直近 days 日以内に close されたもの。
+    """
+    import datetime as _dt
+
+    out = []
+    rows = _call(f"/repos/{REPO}/issues?labels=life:hypothesis&state=open&per_page=100")
+    for i in rows or []:  # type: ignore[union-attr]
+        if i.get("pull_request"):
+            continue
+        status = _label_value(i, "status:") or "open"
+        if status in ("untested", "verifying", "abandoned"):
+            out.append({"number": i["number"], "title": i["title"], "state": "open",
+                        "status": status, "closed_reason": None, "closed_at": None})
+
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    rows = _call(
+        f"/repos/{REPO}/issues?labels=life:hypothesis&state=closed&sort=updated&direction=desc&per_page=100"
+    )
+    for i in rows or []:  # type: ignore[union-attr]
+        if i.get("pull_request") or not i.get("closed_at"):
+            continue
+        closed_at = _dt.datetime.fromisoformat(i["closed_at"].replace("Z", "+00:00"))
+        if closed_at < cutoff:
+            continue
+        out.append({"number": i["number"], "title": i["title"], "state": "closed",
+                    "status": _label_value(i, "status:"),
+                    "closed_reason": i.get("state_reason"),
+                    "closed_at": i["closed_at"][:10]})
+    return out
+
+
+def load_recently_verified(days: int = 60) -> list[dict]:
+    """検証完了で close した仮説（status:verified）のうち、直近 days 日に閉じたもの。
+
+    close した後も一定期間は指標を見張り、後戻りしたら再開するために使う。
+    本人の close 依頼で閉じたもの（status:verified を持たない）は見張らない。
+    本人の判断を機械が覆さないため。
+    """
+    import datetime as _dt
+
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    rows = _call(
+        f"/repos/{REPO}/issues?labels=life:hypothesis,status:verified&state=closed&per_page=100"
+    )
+    out = []
+    for i in rows or []:  # type: ignore[union-attr]
+        if i.get("pull_request") or not i.get("closed_at"):
+            continue
+        if _dt.datetime.fromisoformat(i["closed_at"].replace("Z", "+00:00")) < cutoff:
+            continue
+        metric = parse_metric(i.get("body") or "")
+        if not metric:
+            continue
+        out.append({"number": i["number"], "title": i["title"],
+                    "n_actions": _count_children(i), **metric})
     return out
 
 
@@ -350,6 +443,13 @@ def close_issue(number: int, reason: str, note: str | None = None) -> None:
         "PATCH",
         {"state": "closed", "state_reason": reason},
     )
+
+
+def reopen_issue(number: int, status: str, note: str) -> None:
+    """閉じた issue を開け直す（日次フローの後戻り検知だけが呼ぶ）。"""
+    comment(number, note)
+    _call(f"/repos/{REPO}/issues/{number}", "PATCH", {"state": "open"})
+    set_status_label(number, status)
 
 
 def load_close_requests() -> list[dict]:

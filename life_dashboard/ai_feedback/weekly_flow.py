@@ -326,6 +326,15 @@ def fetch_recent_feedback(week_end: str, days: int = 14) -> list[dict]:
     return out
 
 
+def _load_past_hypotheses() -> list[dict]:
+    """過去の仮説一覧。取れなくても週次は止めない（空で渡す）。"""
+    try:
+        return it.gt.load_hypotheses_history(days=180)
+    except Exception as ex:  # noqa: BLE001
+        print(f"⚠️ 過去の仮説一覧の取得に失敗: {ex}")
+        return []
+
+
 @task(name="Build weekly context")
 def build_weekly_context(week_end: str) -> dict:
     evaluated = it.evaluate_all_issues(week_end)
@@ -341,16 +350,16 @@ def build_weekly_context(week_end: str) -> dict:
         "intervention_effects": fetch_intervention_effects(week_end),
         # 仮説が1件も紐付いていない life:problem。週次LLMがここを最優先で見るための入力。
         "unaddressed_problems": it.load_unaddressed_problems(),
+        # 既に扱った仮説（untested / verifying / abandoned / 直近180日に close）。
+        # 重複チェックが active しか見ておらず、検証済み・放置中の仮説を出し直しうるため。
+        "past_hypotheses": _load_past_hypotheses(),
         "active_issues": [
             {k: e[k] for k in (
                 "issue_id", "title", "hypothesis", "status", "metric_name",
                 "baseline_value", "current_value", "target_value", "target_direction",
                 "change_from_baseline_pct", "is_moving", "mention_count", "eval_error",
-            )} | {"history": [
-                {"d": h["eval_date"], "v": h["metric_value"]}
-                for h in (e.get("history") or []) if h.get("metric_value") is not None
-            ]}
-            for e in evaluated if e["status"] in ("open", "testing")
+            )} | {"history": [{"d": d, "v": v} for d, v in it.daily_values(e.get("history"))]}
+            for e in evaluated if e["status"] in it.NARRATED_STATUSES
         ],
         "recent_feedback": fetch_recent_feedback(week_end),
     }
@@ -501,6 +510,22 @@ severity/priority 順に並んでいます。課題だけ起票されて仮説�
 ＝ 放置されている課題です。今週の実験を選ぶときは、ここを最優先の候補プールとして
 扱ってください。特に severity が S1/S2、priority が P0/P1 のものを放置しないこと。
 
+## 既に扱った仮説（`past_hypotheses`・再提案しないこと）
+
+`past_hypotheses` には、`active_issues` 以外の「もう扱った」仮説が入っています。
+`status` / `closed_reason` の意味:
+- `untested` … 打った手が無いまま埋もれている仮説。**同じ角度の新しい仮説を立てないこと。**
+  まだ有効だと思うなら、実験ではなく insights（`type: "question"`）で
+  「#番号 の打ち手を試しませんか」と提案する
+- `verifying` / `status: verified` で closed … 指標が目標に届いて検証が済んだもの。出し直さない
+  （後戻りは日次フローが検知して元の issue を再開する）
+- `abandoned` / `closed_reason: not_planned` … 外れた・不要と判断されたもの
+- `closed_reason: completed`（status が verified 以外）… 本人が「閉じてよい」と判断したもの
+
+**これらと同じ課題・同じ角度の実験を出してはいけません。** 言い換えも同じです。
+どうしても同じ筋をやり直す必要がある場合だけ、`revisits_issue` に元の番号を入れ、
+前回と何が違うのか（新しいデータ、別の打ち手、前回の根拠の誤り）を `revisit_reason` に書いてください。
+
 ## 今週の実験（最大3件まで。数はノルマではない）
 
 分析の最後に、今週試す実験を **0〜3件** 決めてください。
@@ -559,7 +584,10 @@ severity/priority 順に並んでいます。課題だけ起票されて仮説�
       "baseline_value": 数値,
       "target_value": 数値,
       "target_direction": "decrease"|"increase",
-      "why_not_chance": "なぜこれが偶然の発見でないか"}}
+      "why_not_chance": "なぜこれが偶然の発見でないか",
+      "action_candidate": "本人が試せる具体的な打ち手を1つ（何を・いつ・どれくらい）。本人はまだ試すと決めていない",
+      "revisits_issue": "past_hypotheses の筋をやり直す場合だけ元のissue番号（数値）。それ以外は null",
+      "revisit_reason": "revisits_issue を入れた場合だけ、前回と何が違うか"}}
   ],
   "queries_run": ["実際に投げた主要なSQLを3〜5本"]
 }}
@@ -567,6 +595,9 @@ severity/priority 順に並んでいます。課題だけ起票されて仮説�
 insights は3〜5件（`type: "question"` を含めてよい）。
 既に日次で伝えた内容（`recent_feedback`）の繰り返しは禁止です。
 experiments は0〜3件。数はノルマではない。
+各 experiment には必ず `action_candidate`（打ち手の候補）を付けること。
+**打った手としては記録されない**（本人が試すと決めるまでは候補のまま）。
+日次FBがこの候補を本人に示して「試すか」を聞くので、本人がすぐ実行できる具体性で書く。
 
 ## データ
 {data}
@@ -745,6 +776,14 @@ def register_experiments(exps: list[dict], week_end: str) -> list[str]:
         except (TypeError, ValueError):
             parent_number = None
 
+        revisits = exp.get("revisits_issue")
+        notes = None
+        if revisits:
+            notes = (
+                f"#{revisits} の筋のやり直し。前回との違い: "
+                f"{exp.get('revisit_reason') or '（理由の記載なし）'}"
+            )
+
         try:
             issue_id = it.create_issue(
                 title=exp["title"],
@@ -760,6 +799,8 @@ def register_experiments(exps: list[dict], week_end: str) -> list[str]:
                 opened_date=week_end,
                 status="open",
                 parent_number=parent_number,
+                notes=notes,
+                action_candidate=exp.get("action_candidate"),
             )
         except (KeyError, ValueError, TypeError) as e:
             # metric_sql が無い・方向が不正などは「処方として不成立」なので登録しない。
@@ -792,13 +833,10 @@ def register_experiments(exps: list[dict], week_end: str) -> list[str]:
                 "集計基準（単日 / N日平均）が食い違っている可能性がある。"
                 f"baseline を実測値 {value} に置き換えた。"
             )
-            it.TRINO.execute_action(f"""
-                UPDATE iceberg.life_gold.ai_feedback_issues
-                SET baseline_value = {value},
-                    notes = COALESCE(notes, '') || {it._q(warn)},
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE issue_id = {it._q(issue_id)}
-            """)
+            # ★2026-10-03: GitHub の本文を直す★ 以前は移行前の Trino テーブル
+            # （ai_feedback_issues）を UPDATE しており、正である GitHub の baseline は
+            # 誤ったまま残っていた。
+            it.gt.set_baseline(int(issue_id), value, warn)
             print(f"⚠️ {warn}")
 
         issue_ids.append(issue_id)
