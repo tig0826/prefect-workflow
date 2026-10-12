@@ -153,6 +153,39 @@ GitHub が唯一の正で、Trino には載せない（出どころが2つにな
 **出典を引ける精度は保証できない**（モデルの内部知識に依存）。
 確実な数値を出典付きで言わせたいなら RAG が必要。未着手。
 
+## 📧 週次レポートのメール（2026-10-10 追加）
+
+月曜 07:30 の週次フロー（`weekly_flow.py`）が分析を保存したあと、ダッシュボードの週次レポート
+（`life.mynet/report`）と同じ内容を、グラフ画像つきの HTML メールで Gmail から本人宛てに送る。
+実装は `ai_feedback/weekly_report_mail.py`。
+
+- **数字は UI の API（`/api/report/weekly?fresh=1`）から受け取る。** 集計を Python で書き直すと
+  ページとメールで数字がずれるため。メール側でやるのは HTML と matplotlib のグラフ画像だけ
+- 送信に失敗しても週次フロー自体は成功扱い（戻り値の `mail_sent` が false になり、ログに残る）
+- 再送: `prefect deployment run 'Weekly Report Mail/life_weekly_report_mail_manual' -p week_end=2026-10-04`
+- ダッシュボードの AI Feedback 欄の「週次」タブは廃止した（レポートと重複し、しかも日曜を開いたときしか出なかった）
+
+初回の設定（Prefect の UI か CLI で）:
+1. Google アカウントで2段階認証を有効にし、「アプリパスワード」を発行する（16文字）
+2. Secret ブロック `gmail-app-password` にアプリパスワードを入れる
+3. Variable `report_mail_address` に Gmail アドレスを入れる（送信元＝宛先）
+4. （任意）Variable `life_dashboard_url`。省略時 `http://life.mynet`
+
+必要なもの: pod から `life.mynet:80` と `smtp.gmail.com:465` に出られること、
+イメージに matplotlib（pyproject に追加済み）と日本語フォント（Dockerfile の `fonts-noto-cjk`）。
+
+## 🗓 月次（長期）分析（2026-10-10 追加）
+
+毎月1日 08:10 に `monthly_flow.py` が前の月までを振り返る。結果は `ai_feedback`（slot=`monthly`、
+feedback_date=月末）に保存し、ダッシュボードの「長期トレンド」（`/trends`）に出す。メールでも届く（週次と同じ設定）。
+
+- 役割: **週次では見えないことだけ**。ゆっくりした変化、打った手が定着したか・元に戻ったか、
+  繰り返し現れる傾向（仮説として。診断はしない）。新しい実験（処方）は出さない
+- 数字は UI の `/api/trends?range=all&end=月末&fresh=1` から受け取る（週平均と目印の定義を1か所に保つため）。
+  足りない切り口は run_sql で掘らせる
+- 手動実行（初回の確認など）:
+  `prefect deployment run 'AI Feedback Monthly/life_ai_feedback_monthly' -p month=2026-09 -p force=true`
+
 ## 📋 チケット管理のルール（2026-10-03 改訂）
 
 ### 誰が何をしてよいか
@@ -374,6 +407,15 @@ bronze が更新されない限り効かない。
 `COALESCE(resting_heart_rate, 0)` で NULL を 0 に潰していたため、7日移動平均が
 **78.5 → 68.6** に落ち、AI が存在しない急上昇を警告していた。`NULLIF` に変更し、
 `resting_hr_7d_n`（何日分の平均か）を併記した。**欠測日数が違う週の平均を比較してはいけない。**
+
+### incremental の中で窓関数を使うときは窓の分だけ余分に読む
+`mrt_fitness_daily_summary` は incremental 実行で直近14日だけを読み、その中で
+`ROWS BETWEEN 6 PRECEDING` の7日平均を計算して merge していた。窓関数は**読み込んだ行しか見ない**
+ので、読み込み範囲の先頭の日は窓が欠けたまま上書きされ、日が経つと
+**`weight_7d_avg` がその日の体重と一致**（`weight_7d_n=1`）するようになっていた。
+安静時心拍・カロリー収支の7日平均も同様。AI FB とチャットもこの壊れた値を読んでいた。
+対応: 読み込みは `reprocess_days + 6` 日前から、出力は `reprocess_days` 日分だけに絞る（2026-10-10）。
+**過去分は `--full-refresh` で1回作り直す必要がある。**
 
 ### current_date は UTC 基準
 Trino のセッションTZが UTC なので、JST の早朝に1日ずれる（JST 08:00 = UTC 前日23:00）。

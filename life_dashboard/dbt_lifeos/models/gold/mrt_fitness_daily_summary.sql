@@ -7,6 +7,19 @@
     partitioned_by=['target_date']
 ) }}
 
+-- ★7日移動平均は、出力する期間より6日前から読んで計算する（2026-10-10 修正）★
+-- 以前は incremental の実行で「直近14日」だけを読み、その中で7日窓を計算していた。
+-- そのため読み込み範囲の先頭の日は、窓の中に自分しか無い状態で計算され merge で上書きされる。
+-- 日が経って先頭に来た日ほど窓が欠け、最後は「7日平均＝その日の値」で固定されていた
+-- （実測: 9/28 以前の weight_7d_avg はすべて当日の体重と一致、weight_7d_n=1）。
+-- 安静時心拍・カロリー収支の7日平均も同じ壊れ方をしていた。
+-- 読み込みは 14+6 日前から、出力は 14 日分だけにして、窓が常に7日そろうようにする。
+-- 過去分を直すには一度だけ --full-refresh が必要（incremental は14日分しか作り直さない）。
+-- reprocess_days は他モデルと同じ var で上書きできる。gold には既定で 7 が渡るが、
+-- 従来どおり最低14日は作り直す。
+{% set reprocess_days = [var('reprocess_days', 14) | int, 14] | max %}
+{% set lookback_days = reprocess_days + 6 %}
+
 -- 1. Fitbitの日次サマリー（詳細データと体重をすべて取得）
 WITH fitbit_daily AS (
     SELECT
@@ -43,7 +56,7 @@ WITH fitbit_daily AS (
         NULLIF(bmi, 0) AS bmi
     FROM {{ ref('fitbit_summary') }}
     {% if is_incremental() %}
-    WHERE CAST(dt AS DATE) >= date_add('day', -14, current_date)
+    WHERE CAST(dt AS DATE) >= date_add('day', -{{ lookback_days }}, current_date)
     {% endif %}
 ),
 
@@ -57,8 +70,8 @@ fitbit_activities_aggregated AS (
         SUM(calories) AS total_calories
     FROM {{ ref('fitbit_activity') }}
     {% if is_incremental() %}
-    -- 直近14日分だけ再計算してマージ（Icebergの効率化）
-    WHERE CAST(dt AS DATE) >= date_add('day', -14, current_date)
+    -- 直近14日分を再計算してマージ（7日平均のために6日余分に読む）
+    WHERE CAST(dt AS DATE) >= date_add('day', -{{ lookback_days }}, current_date)
     {% endif %}
     GROUP BY CAST(dt AS DATE), activity_name
 ),
@@ -83,7 +96,7 @@ asken_daily AS (
         COALESCE(calories_kcal, 0) AS calories_in
     FROM {{ ref('asken_nutrition') }}
     {% if is_incremental() %}
-    WHERE meal_date >= date_add('day', -14, current_date)
+    WHERE meal_date >= date_add('day', -{{ lookback_days }}, current_date)
     {% endif %}
 ),
 
@@ -160,3 +173,8 @@ moving_averages AS (
 )
 
 SELECT * FROM moving_averages
+{% if is_incremental() %}
+-- 余分に読んだ6日分は窓を埋めるためだけのもの。書き戻すのは直近14日分だけ
+-- （先頭の6日は窓が欠けた値になっているので、書くと正しい過去の値を壊す）。
+WHERE target_date >= date_add('day', -{{ reprocess_days }}, current_date)
+{% endif %}
