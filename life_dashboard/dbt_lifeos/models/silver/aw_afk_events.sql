@@ -1,7 +1,17 @@
+-- ★merge ではなく delete+insert★
+-- AW は**進行中のイベントをポーリングごとに新しい id で返す**。実測（2026-08-20 の U-NEXT）:
+--   id 266419(1120秒) → 266460(2020) → 266471(2919) → 266475(3819) → 266484(4719) → 266505(5619)
+-- 開始時刻は同じで duration が15分ずつ伸びており、15分間隔のスクレイプ回数と一致する。
+-- pk に source_event_id を含むため merge では毎回「別の行」として挿入され、
+-- **消えた古いスナップショットが削除されずに残る**。
+-- 結果、同じ時間帯が何重にも計上されていた（8日間で重なり 5,016分・515ペア）。
+-- bronze は日次スナップショット（上書き）なので、対象日の行をまとめて入れ替えるのが正しい。
+--
+-- 注意: config() は Jinja 式なので中に -- コメントは書けない。説明はここに置く。
 {{ config(
     materialized='incremental',
-    incremental_strategy='merge',
-    unique_key='aw_event_pk',
+    incremental_strategy='delete+insert',
+    unique_key='source_dt',
     table_type='iceberg',
     format='parquet',
     partitioned_by=['day(afk_start_time_jst)']

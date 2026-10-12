@@ -1,6 +1,12 @@
 # Life Dashboard Data Pipeline
 
-各種ソース（Fitbit, ActivityWatch, Asken, OwnTracks等）からライフログを収集し、分析・可視化用に加工・提供するためのデータパイプラインです。
+各種ソース（Fitbit, Google Health, ActivityWatch, あすけん, Google タイムライン等）から
+ライフログを収集し、分析・可視化・AIフィードバック用に加工・提供するためのデータパイプラインです。
+
+※ OwnTracks は 2026-05-06 で停止しており、現在どのマートからも参照されていない（実質廃止）。
+
+※ **レガシー Fitbit Web API は 2026-09 に停止する。**体重・体脂肪は先に配信が止まり、
+移行先は Google Health API。詳細は「Fitbit Web API の停止と Google Health への移行」を参照。
 
 ## 🏗 アーキテクチャ
 
@@ -13,8 +19,9 @@
 
 - `asken_exporter/`: あすけん（食事・栄養）データ収集
 - `aw_exporter/`: ActivityWatch（PC作業・AFK）データ収集
-- `fitbit_exporter/`: Fitbit（睡眠・歩数・心拍数）データ収集
-- `owntracks_exporter/`: OwnTracks（位置情報・外出）データ収集
+- `fitbit_exporter/`: Fitbit（睡眠・歩数・心拍数）データ収集。**2026-09 に停止する旧API**
+- `google_health_exporter/`: Google Health（体重・体脂肪・歩数・睡眠）データ収集。Fitbit の後継
+- `timeline_exporter/`: Google タイムライン（位置情報・外出）データ収集と地名解決
 - `common/`: 共有タスク、Trino API連携
 - `dbt_lifeos/`: dbt プロジェクト（モデル、マクロ、テスト）
   - `models/gold/`: ダッシュボード用マート（Gold層）
@@ -28,6 +35,12 @@
 ```bash
 uv run python -m aw_exporter.aw_flow
 uv run python -m fitbit_exporter.fitbit_flow
+uv run python -m google_health_exporter.google_health_flow
+```
+
+Google Health のトークン取得は手元で一度だけ（ブラウザでの同意が必要）:
+```bash
+uv run python -m google_health_exporter.get_google_health_token <client_secret.json>
 ```
 
 ### 2. dbt モデルの更新
@@ -37,6 +50,485 @@ cd dbt_lifeos
 dbt run
 ```
 
+### 3. デプロイ（コードの変更を本番の flow に反映する）
+CI/CD は無い。コードを直しても、これを実行するまで k8s 上の flow は古いイメージのまま動く。
+
+```bash
+prefect --no-prompt deploy --all
+```
+
+- `prefect.yaml` の `build` / `push` が linux/amd64 のイメージをビルドして push し、全 deployment を更新する
+- **`--no-prompt` を付けること。** 付けないと、`schedules` を持たない deployment
+  （`life_ai_feedback_daily_manual` など）に当たるたびに「スケジュールを設定するか」と対話で聞かれる。
+  そこで y を選ぶと手動専用の deployment に定期実行が付いてしまう
+
 ## 📊 ダッシュボードとの連携
-加工済みのデータは、別プロジェクト `dashboard` (Next.js) から Trino 経由で参照されます。
-特に `life_gold.mrt_behavior_slots_15m` テーブルが、ダッシュボードの行動タイムラインのメインデータソースとなります。
+加工済みのデータは、別プロジェクト `life_dashboard_ui` (Next.js) から Trino 経由で参照されます。
+`life_gold.mrt_behavior_slots_15m` がダッシュボードの行動タイムラインのメインデータソースです。
+
+## 🤖 AI フィードバック（2026-08 再設計）
+
+旧構成（朝8時/昼13時/夜22時の3回）は廃止。実測で3枠が同じ内容を再放送していた
+（直近30日70件のうち81%が「深夜」に言及）ため、**日次1回 + 週次1回**に変更した。
+
+| deployment | 実行 | 役割 |
+|---|---|---|
+| `life_ai_feedback_gate` | 05:00-11:00 の15分ごと | 起床を検知して日次FBを1回だけ生成。11時までに検知できなければ強制発火 |
+| `life_ai_feedback_weekly` | 月曜 07:30 | **処方（今週の実験）を出す唯一の場所**。SQL探索権限と検索を持つ |
+| `life_ai_feedback_daily_manual` | 手動 | 起床検知を待たずに再生成 |
+
+- `ai_feedback/daily_flow.py` … **進行中 issue の実況**に徹する。処方は最大1つ。
+  主対象は `awake_span`（前回の起床〜今朝の起床の連続区間）。暦日で切ると
+  前日の夜〜深夜が集計の隙間に落ちるため。
+- `ai_feedback/weekly_flow.py` … 洞察と「今週の実験」の決定。完全性クリティック付き。
+- `ai_feedback/issue_tracker.py` … チケットの状態管理（評価・卒業・close など）。
+  チケット本体は GitHub。Trino に残しているのは `ai_metric_history`（指標の時系列）と
+  `ai_instrumentation_proposals`（計装提案）だけ。旧 `ai_feedback_issues` / `ai_interventions` は使っていない。
+- `ai_feedback/github_tickets.py` … GitHub Issues の読み書き（REST を直接叩く）。
+- `ai_feedback/discovery.py` + `stats.py` … 構造的総当たり発見（重なり/遷移/不在）と BH-FDR。
+- `ai_feedback/sql_tool.py` … 週次に渡す読み取り専用SQLツール。URL・曲名・食事の品目は参照不可。
+
+**反復を防いでいる仕組み**: 仮説に `metric_sql`（1行1列の数値・`{eval_date}` プレースホルダ）を
+必須にし、指標の動きで状態を機械的に遷移させる（下の「チケット管理のルール」）。
+`metric_sql` を書けない処方（「十分な睡眠を」など）は `create_issue` が例外で弾く。
+
+### チケットの3層構造
+
+GitHub が唯一の正で、Trino には載せない（出どころが2つになると「間違った方を読む」事故が起きる）。
+リポジトリは `GITHUB_TICKET_REPO`（既定 `tig0826/life_dashboard_ui`）。
+
+| ラベル | 層 | 意味 |
+|---|---|---|
+| `life:problem` | 課題 | 解決したい実体。`sev:S1`〜`S4` / `pri:P0`〜`P3` 付き |
+| `life:hypothesis` | 仮説 | 課題の原因についての理論。`metric_sql` を持つ |
+| `life:action` | 打った手 | 実験そのもの（DNSブロック等）。`kind:*` 付き |
+| `life:instrumentation` | 計測できていない | 測る手段が無くて検証できない論点 |
+
+**REST の `GET /issues/N` は `parent` を null で返す**（sub-issue 関係があっても）。
+親は課題側の `sub_issues` を辿って逆引きする（`github_tickets.parent_map()`）。
+
+### 毎日同じ話題になるのを防いでいる仕組み
+
+2026-09-11 の実測で、18日間の話題分布が
+漫画72% / 睡眠66% / 解錠61% / 業務50% に対し **体重0% / 歩数0% / 食事5%** だった。
+原因は3つあり、いずれも修正済み。
+
+1. **成功に出口が無かった** → 上記の `verifying`（ただし実際に動き出したのは 2026-10-03 のバグ修正後）
+2. **新鮮さの原則が書き換えで消えていた。** さらに `recent_feedback_history` が
+   daily の経路では None で、**モデルは自分が昨日何を言ったかを知らずに書いていた**。
+   両方復活（実況の枠だけは対象外。継続性が価値なので繰り返してよい）
+3. **プロンプトの例示に引っ張られていた。** 「`phone_signals` の解錠回数など」と
+   書いていたため解錠の話が61%を占めた。**例示は全削除**し、
+   何を話題にするかはデータ側で計算して渡す:
+   - `under_covered_domains` … 直近のFBで触れていない領域（枠の名前だけ。中身の例は持たない）
+   - `metric_deviations` … 直近3日が過去28日の中央値から2割以上外れた指標
+   - `review_candidates` … 客観指標で閉じられない課題（本人に問い直す対象）
+
+**★プロンプトに具体例を書かないこと★** モデルは例示に極端に強く引っ張られる。
+話題の選定はコード側でやり、プロンプトには枠の説明だけを書く。
+
+### 振り返りの問いかけ
+
+身体症状や精神的な悩みの課題は客観指標が無く、**本人の申告でしか閉じられない**。
+放置すると永久に open のまま在庫になる（2026-09-11 時点で14件のうち11件は
+稼働中の仮説が0件。最severe な #18(S1) すらゼロ）。
+
+日次FBが1件だけ問いかけを出す。**「解決しましたか」とは聞かせない**（答えようがない）。
+関連指標がどう変わったかを先に示し、本人が記憶や気分ではなく事実を足場に
+自分を客観視できる形にする。問いかけは1回のFBに1件まで、同じ課題を続けて聞かない。
+
+**自動では閉じない。** 閉じるのは本人が会話で「閉じていい」と言ったとき（`req:close`）だけ。
+誤クローズはその課題への提案が静かに止まる害を生む。
+`abandoned` の誤判定で一度踏んでいる（介入0件の未検証の仮説が「反証済み」として死んだ）。
+
+### 知識に基づく指摘
+
+`metric_deviations` を起点にしても、本人の状況（課題一覧・直近の訴え）から連想する
+科学・医療・栄養学の一般知見を起点にしてもよい。**データが尽きた日の代替ではなく、
+それ自体で価値のある選択肢**（2026-09-30 改訂。以前は「新しく言えることが無い日は」の
+条件付きだったうえ、禁止事項の「一般論」と矛盾していた）。
+制約: 一般知見であることを明示する / **精密な数値を捏造しない**（方向と機序を述べる）/
+診断をしない。
+
+**出典を引ける精度は保証できない**（モデルの内部知識に依存）。
+確実な数値を出典付きで言わせたいなら RAG が必要。未着手。
+
+## 📧 週次レポートのメール（2026-10-10 追加）
+
+月曜 07:30 の週次フロー（`weekly_flow.py`）が分析を保存したあと、ダッシュボードの週次レポート
+（`life.mynet/report`）と同じ内容を、グラフ画像つきの HTML メールで Gmail から本人宛てに送る。
+実装は `ai_feedback/weekly_report_mail.py`。
+
+- **数字は UI の API（`/api/report/weekly?fresh=1`）から受け取る。** 集計を Python で書き直すと
+  ページとメールで数字がずれるため。メール側でやるのは HTML と matplotlib のグラフ画像だけ
+- 送信に失敗しても週次フロー自体は成功扱い（戻り値の `mail_sent` が false になり、ログに残る）
+- 再送: `prefect deployment run 'Weekly Report Mail/life_weekly_report_mail_manual' -p week_end=2026-10-04`
+- ダッシュボードの AI Feedback 欄の「週次」タブは廃止した（レポートと重複し、しかも日曜を開いたときしか出なかった）
+
+初回の設定（Prefect の UI か CLI で）:
+1. Google アカウントで2段階認証を有効にし、「アプリパスワード」を発行する（16文字）
+2. Secret ブロック `gmail-app-password` にアプリパスワードを入れる
+3. Variable `report_mail_address` に Gmail アドレスを入れる（送信元＝宛先）
+4. （任意）Variable `life_dashboard_url`。省略時 `http://life.mynet`
+
+必要なもの: pod から `life.mynet:80` と `smtp.gmail.com:465` に出られること、
+イメージに matplotlib（pyproject に追加済み）と日本語フォント（Dockerfile の `fonts-noto-cjk`）。
+
+## 🗓 月次（長期）分析（2026-10-10 追加）
+
+毎月1日 08:10 に `monthly_flow.py` が前の月までを振り返る。結果は `ai_feedback`（slot=`monthly`、
+feedback_date=月末）に保存し、ダッシュボードの「長期トレンド」（`/trends`）に出す。メールでも届く（週次と同じ設定）。
+
+- 役割: **週次では見えないことだけ**。ゆっくりした変化、打った手が定着したか・元に戻ったか、
+  繰り返し現れる傾向（仮説として。診断はしない）。新しい実験（処方）は出さない
+- 数字は UI の `/api/trends?range=all&end=月末&fresh=1` から受け取る（週平均と目印の定義を1か所に保つため）。
+  足りない切り口は run_sql で掘らせる
+- 手動実行（初回の確認など）:
+  `prefect deployment run 'AI Feedback Monthly/life_ai_feedback_monthly' -p month=2026-09 -p force=true`
+
+## 📋 チケット管理のルール（2026-10-03 改訂）
+
+### 誰が何をしてよいか
+
+4者が同じチケットを触るので、できることを分けている。分けないと状態を争って台帳が腐る。
+
+| 書き手 | できること | できないこと |
+|---|---|---|
+| 人間・CLI | 何でも | — |
+| ダッシュボードのチャット本体 | チケットを**読む**だけ（`read_ticket`） | 起票・追記・状態変更・close |
+| ダッシュボードの司書（`lib/ticket-librarian.ts`） | 起票・コメント追記・severity/priority の変更・**close の依頼（`req:close`）** | 本文の編集・close |
+| 日次フロー（`daily_flow.py` → `issue_tracker.py`） | 指標の評価・status の遷移・「指標の推移」コメントの更新・**close の実行** | 本文の編集（metric ブロックの数値以外） |
+| 週次フロー（`weekly_flow.py`） | 仮説の起票（今週の実験）・棄却の判定 | close |
+
+司書はチャットの**毎ターン**、応答を返した直後に `await` せずに呼ばれる（会話の「終わり」を待つ仕組みではない）。
+チャットのモデル自身はチケットを操作する道具を持たない。
+
+### 仮説の状態遷移
+
+```
+起票（weekly / chat / 手動）→ open        ※週次の起票には本文に「打ち手の候補」が付く
+   │
+   ├ 言及4回 + 打った手なし                        → untested（未検証。実況から外れる。評価は続く）
+   │     └ 打った手（life:action）が sub-issue に付く → testing（baseline を測り直して復帰）
+   ├ 言及4回 + 打った手あり + 7日経過 + 動かない     → abandoned（反証。open のまま残る）
+   │
+open / testing / untested
+   └ 目標を5日連続で達成                             → verifying（実況から外れる。評価は続く）
+         │                                             untested からなら「自然達成」として記録
+         ├ その後も14日連続で目標を満たす             → status:verified を付けて close（completed）
+         │     └ close 後60日以内に直近3日すべて外れる → 同じ issue を reopen（後戻り）
+         └ 直近3日すべてで目標を外す                  → 打った手があれば testing、無ければ open に戻す
+
+どの状態でも: 本人が会話で「閉じていい」と明言 → 司書が req:close → 翌朝 close（completed）
+```
+
+- 判定はすべて**指標の数字だけ**で行う。会話でどう書いても変わらない（本人の close 依頼だけが例外）
+- 日次で**評価**するのは open / testing / verifying / untested、**実況**するのは open / testing だけ
+- 本人の close 依頼で閉じたものは、閉じた後の見張り（reopen）の対象にしない。本人の判断を機械が覆さないため
+- 親の課題（life:problem）は、子の仮説が閉じても閉じない。課題が解決したかは課題の側で判断する
+- 閉じたものを再開したいときは reopen し、status ラベルも testing などに直す
+  （`req:close` は閉じるときに外れるので、reopen した翌朝にまた閉じられることはない）
+
+**`verifying` は「課題が解決した」ではない。** 示されたのは打った手が効いたことだけで、
+親の課題が動いたかは別問題。実例: #7「漫画アプリへの勤務中の逃避」の親は
+#21「娯楽への逃避が、介入を重ねても総量として減らない」であり、漫画が減っても
+**逃避先が移っただけの可能性**が残る。達成時に問いを
+「この指標が目標に届いたか」→「親の課題が動いたか」に切り替える。
+
+### 打った手の作られ方
+
+打った手（life:action）は**本人が試すと決めたものだけ**を記録する。決めていないものを
+「打った」と記録すると、未検証と反証が区別できなくなるため。
+
+1. 週次が仮説（今週の実験）を起票するとき、本文に `## 打ち手の候補` を書く（この時点では打っていない）
+2. 日次FBが、打った手の無い仮説から1日1件まで「この打ち手を試しますか？」と聞く
+3. 本人がチャットで「#N を試す」と言うと、司書が #N の子として打った手を起票する
+4. 翌朝 `revive_untested` / 評価が打った手を見て testing として扱う
+
+以前は週次が仮説だけを作り、打った手を作る関数（`record_intervention`）はどこからも呼ばれていなかった。
+チャットで話さない限り、週次の実験はほぼ確実に untested に沈んでいた（2026-10-03 時点で18件中14件）。
+
+### 同じ仮説を出し直さない仕組み
+
+- **週次**には `past_hypotheses`（untested / verifying / abandoned と、直近180日に close したもの）を渡し、
+  同じ課題・同じ角度の実験を禁止している。やり直す場合だけ `revisits_issue` と理由を書かせ、本文の補足に残す。
+  untested と同じ筋なら、新しい仮説ではなく「#N の打ち手を試しませんか」と質問で出させる
+- **司書**の照合一覧には最近閉じた課題・仮説（各30件）も載せ、同じものは新規起票せず
+  閉じたチケットに「再発」としてコメントさせる（開け直すかは本人が決める）
+- **検証完了で閉じた仮説**は60日間指標を見張り、後戻りしたら新しい仮説ではなく元の issue を再開する
+- 以前は週次の重複チェックが open / testing しか見ておらず、閉じた・未検証の仮説を出し直しうる作りだった
+
+### 本人の close 依頼（req:close）
+
+本人が既存チケット1件について、本人の言葉で「閉じていい」「解決した」「もう大丈夫」と言った場合だけ、
+司書が `req:close` ラベルと**本人の発言の引用**をコメントで残す。翌朝の日次フロー
+（`process_close_requests`）が閉じる。AI が提案しただけ・本人が迷っている・対象を1件に
+特定できない場合は依頼を残さない。誤って閉じた場合は reopen すればよい。
+
+### 指標の推移コメント
+
+各仮説には `## 指標の推移` で始まるコメントが1つあり、日次フローが評価のたびに**上書き**する
+（追記で積むとコメント欄が数字で埋まるため）。直近14日の値・目標・連続達成日数・status を載せる。
+評価していない仮説（abandoned・close 済み）のコメントは更新されないので、古い値のまま残る。
+
+`ai_metric_history` には同じ日の行が複数入ることがある（日次の手動リラン、週次の評価日が
+日次と重なる）。読むときは日付ごとに1行へ畳む（値の取れた行を優先し、その中で最新）。
+**重複のまま「連続○日」を数えてはいけない。**
+
+### 2026-10-03 に直したバグ
+
+| 症状 | 原因 |
+|---|---|
+| 漫画が9/9から目標以下なのに #7 が毎朝実況され続けた | `enforce_graduation` が履歴を `h["v"]` で読んでいたが、実際のキーは `metric_value`。卒業は 9/11 の導入以来**一度も起きていなかった** |
+| 本人が3回「クローズでいい」と言っても閉じない | 閉じる経路がどこにも無かった → `req:close` を追加 |
+| verifying に上がっても閉じない | 「weekly に委ねる」と書かれていたが未実装だった → `enforce_verification` を追加 |
+| チケット上の「指標の推移」が 9/1 で止まっていた | 更新する処理が存在しなかった（移行時に1度書かれただけ） |
+| チャットで起票した「打った手」が仮説に繋がらない | 司書が action の親を sub-issue に付けていなかった（実害が出る前に修正） |
+| 週次の起票直後の baseline 補正が効いていない | 移行前の Trino テーブル `ai_feedback_issues` を UPDATE していた。GitHub の本文を直すように修正 |
+| 自然に目標へ届いた仮説が埋もれる | untested は評価自体が止まっていた（#9 主睡眠は目標360分に対し380分なのに untested のまま） |
+| チャットが「会話が終わった後にまとめて処理する」と説明した | チャットの system プロンプト自体がそう書いていた → 実装に合わせて修正し、書かれていない仕組みを推測で説明しないよう指示 |
+
+### 未解決（意図的に据え置いているもの）
+
+- **testing の仮説は自動で棄却されない。** 本来は「介入あり + 動かない」は棄却すべきだが、
+  今の「介入」には打ち手でないものが混ざる（#13 の介入 #3 は DQX のインストール＝原因そのもの）。
+  #8 は指標が打ち手の対象（画面時間）なので、打ち手が効かなかっただけで仮説が外れたわけではない。
+  この状態で広げると誤った「反証済み」が増える
+- **abandoned は自動で閉じない。** 同じ理由で、閉じると誤った反証が確定する。#13 は棄却の根拠自体が誤り
+- **本人の close 依頼は一律 completed で閉じる。** 不要と判断したもの（not planned）も completed になる
+- **打ち手が要らない「観察型」の仮説を区別できない。** カウンセリングや受診で確かめる仮説
+  （#44 締切がないと動けない構造、#46 ADHD特性と体重）も、打った手が無ければ untested になる
+- **司書は1往復につき1件しか処理できない。** 「#3 と #12 を閉じていい」とまとめて言われても1件だけ
+
+## 🔄 Fitbit Web API の停止と Google Health への移行（2026-09）
+
+**レガシー Fitbit Web API は 2026年9月に停止する**（月内の正確な日付は Google 未公表）。
+Google が Fitbit を Google Health に統合し、健康データが GCP の Restricted スコープに
+再分類されたため、旧APIは廃止される。
+
+**体重・体脂肪は本体の停止より先に死んだ。** 2026-08-31 の実測を最後に
+`/1/user/-/body/date/` が `{"bmi":0,"fat":0,"weight":0}` を返すだけになった。
+アプリには値があるのにAPIに来ない状態で、`mrt_fitness_daily_summary.weight_kg` が
+9日間 null になっていた。**体重の欠測を体重計の故障や測定習慣の問題として扱わないこと。**
+
+理由はデータソースを見れば分かる。体重は `platform: HEALTH_CONNECT` / `GOOGLE_WEB_API` 由来で、
+**Fitbit の機器を経由していない**。歩数・睡眠は `platform: FITBIT`（Pixel Watch 3）なので
+旧APIを通っており、これらだけ生き残っていた。
+
+### 移行状況
+
+| 項目 | 取得元 |
+|---|---|
+| 体重・体脂肪・BMI | **Google Health**（移行済み） |
+| 歩数・睡眠・心拍・カロリー | レガシー Fitbit（旧APIが死ぬまで並行稼働） |
+
+`life_bronze_google_health`（15分ごと・直近2日）と
+`life_bronze_google_health_backfill`（毎日 04:10・直近14日）の2枠で取る。
+**窓を2つに分けているのは意図的。** `fitbit_flow` は対象日が「昨日と今日」だけで、
+後から入った値やその時だけAPIが失敗した日が永久に欠ける。実例が 2026-08-23 の体重で、
+今APIを叩けば 92.9kg が返るのに bronze は null のまま。silver の14日自己修復は
+bronze が更新されない限り効かない。
+
+### Google Health API の仕様（実測で確認したもの）
+
+- エンドポイント `https://health.googleapis.com/v4/users/me/dataTypes/{type}/dataPoints`
+- スコープは3つ。いずれも Restricted:
+  `googlehealth.health_metrics_and_measurements.readonly` /
+  `...activity_and_fitness.readonly` / `...sleep.readonly`
+- **filter に使える項目がデータ型ごとに違う。** 単発計測は `sample_time.physical_time`、
+  歩数は `interval.start_time`、**睡眠は `interval.end_time` のみ**
+  （`sleep.interval.start_time` は `INVALID_DATA_POINT_FILTER_DATA_TYPE_MEMBER` で拒否）
+- **ページングが必須。** 30日分の歩数は1ページ目だけなら42件、全ページ辿ると13,559件
+- レスポンスのキーは lowerCamelCase で、パスの kebab-case とは別物（`body-fat` → `bodyFat`）
+- Trino の JSON パスはハイフンを含むキーに `$."body-fat"` を使えない。`$["body-fat"]` と書く
+- 単位は `weightGrams`（グラム）。**lbs 換算を掛けてはいけない**（旧実装の `* 0.453592` は削除済み）
+- **BMI は API に無い。** 身長から自前計算する。身長は `dbt_project.yml` の
+  `vars.height_m`（個人情報なのでモデルに直書きしない）
+
+### ★歩数を HEALTH_CONNECT から取ってはいけない★
+
+同じ実測が最大3系統（`GOOGLE_WEB_API` / `HEALTH_CONNECT` / `FITBIT_WEB_API`）から入る。
+体重は `(時刻, 値)` で重複除去できるが、**歩数は区間データなので値での除去が効かない**。
+デバイス単位で1つ選ぶ必要がある。実測比較（`google_health_exporter/compare_step_sources.py`）:
+
+| 出どころ | gold比 | 相対差 | 区間の重なり |
+|---|---|---|---|
+| `FITBIT` / Pixel Watch 3 | 0.99倍 | 0.5% | 0 / 9 日 |
+| `FITBIT` / MobileTrack | 0.75倍 | 25.2% | 0 / 9 日 |
+| `HEALTH_CONNECT` | 1.83倍 | 82.8% | **9 / 9 日** |
+
+`HEALTH_CONNECT` は**デバイス名を返さない**ためスマホの歩数計と時計を分離できず、
+全日で区間が重なっていて約2倍になる。`FITBIT` 側はデバイス名が返るので
+**`MobileTrack` を除外**すれば時計だけに絞れる。
+
+**機種名で絞らないこと。** 時計を買い替えても追従させるため、除外側（`MobileTrack` は
+スマホ歩数計の固定名）で判定する。旧新2台が併存する期間は日ごとに歩数最大の1台を採る。
+
+**bronze には全ソース・全デバイスをそのまま保存している。** 選別は silver の判断。
+ここで捨てると方針を変えるたびに再取り込みが必要になる
+（例: 時計の充電中に空く穴をスマホの歩数で埋めたくなった場合）。
+
+### 体重の代表値は日ごとの中央値
+
+1日に最大10回測っていて日内で1kg以上ばらつくため、`(時刻, 値)` で重複除去した上で
+中央値を採る。食事・水分のノイズに強く外れ値に引っ張られない。
+**レガシーの `body/date` は日によって最初と最後がバラついていた**ので、
+移行日をまたぐと数百グラムずれる。過去は遡って再計算していない
+（ただし silver は直近14日を読み直すので、その窓に入る日は中央値方式で再計算される）。
+
+### OAuth の落とし穴
+
+- **公開ステータスが「テスト中」だと refresh token が7日で失効する。**
+  認可自体も7日で切れるので、毎週ブラウザで同意を踏み直す必要がある。
+  「本番」に公開すれば解消する
+- **審査は不要だった。** 未認証のまま本番公開でき、代償は「確認されていないアプリ」警告と
+  100ユーザーの生涯上限だけ。CASA 監査（$500〜$4,500）は上限を外すときの話
+- ただし公開には**ホームページURLとプライバシーポリシーURLが必須**。
+  `github.io` は「最上位のプライベートドメイン」として拒否されるため、
+  `tig0826.github.io` を Search Console で所有確認して使っている
+  （ページの実体は `tig0826/tig0826.github.io` リポジトリ）
+
+## ⚠️ 落とし穴（実際に踏んだもの）
+
+### incremental_strategy は merge を安易に使わない
+**ソースがスナップショットなら `delete+insert`、真の追記ログなら `merge`。**
+`merge` は「消えた行」を削除できないため、スナップショット由来のテーブルでは孤児が残る。
+
+実害:
+- AW は**進行中イベントをポーリングごとに新しい `source_event_id`** で返す。
+  merge だと15分ごとに1行ずつ孤児が積み上がり、**8日間で重なり515ペア・5,016分の二重計上**。
+- あすけんで削除した食事が残り、品目合計2549kcal / 栄養1018kcal の矛盾。
+
+対応済み: `aw_window_events` / `aw_afk_events` / `aw_media_events` / `aw_web_events` /
+`aw_unlock_events`（`unique_key='source_dt'`）、`int_aw_categorized` / `int_aw_media` /
+`int_aw_web`（`unique_key='event_date_jst'`）、`asken_meal`（`unique_key='meal_date'`）。
+
+### 欠測を 0 で埋めない
+`COALESCE(resting_heart_rate, 0)` で NULL を 0 に潰していたため、7日移動平均が
+**78.5 → 68.6** に落ち、AI が存在しない急上昇を警告していた。`NULLIF` に変更し、
+`resting_hr_7d_n`（何日分の平均か）を併記した。**欠測日数が違う週の平均を比較してはいけない。**
+
+### incremental の中で窓関数を使うときは窓の分だけ余分に読む
+`mrt_fitness_daily_summary` は incremental 実行で直近14日だけを読み、その中で
+`ROWS BETWEEN 6 PRECEDING` の7日平均を計算して merge していた。窓関数は**読み込んだ行しか見ない**
+ので、読み込み範囲の先頭の日は窓が欠けたまま上書きされ、日が経つと
+**`weight_7d_avg` がその日の体重と一致**（`weight_7d_n=1`）するようになっていた。
+安静時心拍・カロリー収支の7日平均も同様。AI FB とチャットもこの壊れた値を読んでいた。
+対応: 読み込みは `reprocess_days + 6` 日前から、出力は `reprocess_days` 日分だけに絞る（2026-10-10）。
+**過去分は `--full-refresh` で1回作り直す必要がある。**
+
+### current_date は UTC 基準
+Trino のセッションTZが UTC なので、JST の早朝に1日ずれる（JST 08:00 = UTC 前日23:00）。
+窓が7日以下のモデルでは当日を取り逃す。`CAST(current_timestamp AT TIME ZONE 'Asia/Tokyo' AS DATE)`
+を使う。14日窓は1日のずれが無害なのでそのまま。
+
+### incremental の cutoff は COALESCE する
+`WHERE dt >= (SELECT MAX(...) FROM {{ this }})` は、テーブルが空だと NULL になり
+`dt >= NULL` が常に偽で**永久に何も入らない**。
+また WHERE 句内のサブクエリは `CROSS JOIN UNNEST` と組み合わせると Trino が
+decorrelate できず落ちるので、CTE にして CROSS JOIN で持ち込む。
+
+### Fitbit の睡眠は v1 と v1.2 で値が違う
+`python-fitbit` の `client.sleep()` は v1（classic）で、**restless を睡眠に含むため
+v1.2 より 14.9% 多い**（23セッションで4585分 vs 3991分）。段階の区間時系列
+（`levels.data`）は v1.2 にしかないので `_get('/1.2/user/-/sleep/...')` で別途取得している
+（`fitbit_sleep_stages`）。**v1 と v1.2 は同一セッションに別の logId を振る**ので
+log_id で結合できない。突き合わせは時間の重なりで行う。
+
+### 主睡眠/昼寝のラベルは逆転しうる
+`cat_sub` は Fitbit の `isMainSleep` をそのまま使っており、Fitbit は**その日の最長
+セッション**を主睡眠とする。昼寝が長いと逆転する（2026-08-27: 15:18-20:03の284分が
+「主睡眠」、実際の夜間睡眠03:46-06:02の135分が「昼寝」）。
+起床検知は**ラベルに依存せず**「60分以上のセッションが終わっていること」で判定する。
+
+### 睡眠中計測の指標は MNAR
+HRV / 呼吸数 / SpO2 / 皮膚温はカバレッジ55%前後で、**欠測日が完全に一致する**
+（寝ていない夜・時計を外した夜にまとめて落ちる＝調子が悪い日に限って欠ける）。
+`signals_available >= 3` の日だけ複合として評価し、**欠測を「改善」と読まない**。
+
+### 位置情報は stays と routes で鮮度が違う
+`mrt_location_stays` は `timeline_segments` の `visit` 由来、
+`mrt_location_routes` は `timelinePath` 由来。Google が `visit` を返さない日は
+stays が伸びないが**これは正常**（外出が記録されていないだけ）。
+実測で 2026-08-25 以降は `timelinePath` のみで `visit` が 0 件。
+なお `owntracks_*` / `location_stays_silver` は 2026-05-06 で停止しており、
+**現在どのマートからも参照されていない**（OwnTracks 系は実質廃止）。
+
+### 移動は「滞在」と混ぜない・Google のモードを信じない
+`int_timeline_outing` は `cat_main` を2つに分ける。混ぜると
+**実家に数日帰省した期間が丸ごと「移動」に見える**。
+
+| cat_main | 中身 | priority | 帯グラフでの扱い |
+|---|---|---|---|
+| `TRANSIT` | 実際に移動していた時間 | 85 | 帯を奪う。移動中に音楽を聴いても「移動」と出す |
+| `OUTING` | 自宅以外での滞在 | 20 | あらゆる活動に譲る。滞在中は何をしていたかが見えないと思い出せない |
+
+`activity_type` の値は `WALKING` / `IN_TRAIN` / `IN_BUS` / `IN_PASSENGER_VEHICLE` /
+`IN_SUBWAY` / `IN_TRAM` / `IN_FERRY`。**`IN_VEHICLE` と `ON_BICYCLE` は存在しない**
+（旧実装がこの2つで絞っていたため移動が0件になっていた）。
+
+移動は **Google Maps のタイムラインが出しているものをそのまま使う**。
+距離や速度で絞ってはいけない。一度 `distance_meters > 300` で絞ったが、それは
+**バス停までの徒歩を消していた**:
+
+```
+08-20 17:07-17:12 WALKING 234m   ← バス停まで（消えていた）
+08-20 17:12-17:39 IN_BUS  4230m
+08-20 17:39-17:47 WALKING 264m   ← バス停から（同上）
+```
+
+実際に壊れているのは 240件中4件だけで、いずれも所要が異常に長い
+（8,546分/105m、3,846分/9m、868分、433分）。次に長いのは正当な
+`IN_TRAIN` 299分なので **360分で切れば誤って落とすものが無い**。
+この条件だと Fitbit 歩数との相関は **r=0.836**（2026-08, n=28、絞った版は 0.814）。
+自宅座標での判定は採らない（引っ越し・外泊で壊れる）。
+
+GPS が粗く徒歩→バス→徒歩が3セグメントに割れるため、
+**15分未満のギャップは同一移動として連結**する（同日内ギャップの中央値は12分）。
+上の例は「17:07-17:47 40分 WALKING+IN_BUS+WALKING」と1回の移動にまとまる。
+
+**`cat_main='OUTING'` は帯の勝者判定から除外している**（`band_candidates`）。
+13時間の外出のような長い滞在があると、活動ログが無いスロットだけで OUTING が勝ち、
+帯が緑と他の色でまばらに切り替わって**細切れになって何も読み取れなくなる**。
+代わりに `mrt_behavior_slots_15m.is_outing` として勝者ラベルとは独立に出し、
+UI が帯の直下に細い線で連続して描く。滞在中に何をしていたかは帯が、
+外出していた事実は線が持つ。
+
+`TRANSIT` は逆に**普通に帯を奪う**（priority 85）ので線には描かない（二重表示になる）。
+`is_transit` / `transit_kind` はマートには残してあるので必要になれば描ける。
+
+### ダッシュボードのイメージは必ず linux/amd64 でビルドする
+Mac (arm64) で `docker build` すると arm64 イメージが `latest` に上書きされ、
+ノード（amd64）で `exec format error` になり **CrashLoopBackOff で本番が落ちる**。
+`latest` タグを潰しているのでロールバックも効かない。必ず:
+
+```bash
+docker buildx build --platform linux/amd64 -t tig0826/life-dashboard-ui:latest --push .
+```
+
+Prefect 側は `prefect.yaml` に `platform: linux/amd64` があるので `prefect deploy` は安全。
+UI は `life_dashboard_ui/deploy.sh` がこのビルドから apply・rollout まで行うので、手で buildx を打たずにそれを使う。
+
+## 🔎 分析時の注意
+
+- **`mrt_ai_activity_hourly` を source 横断で合算しない**（同じ行動が二重に数えられる）。
+  画面時間の総量は `mrt_ai_screen_hourly`（分単位で重複排除済み）を使う。
+- **`mrt_behavior_slots_15m` は分析に使わない**。1スロット1カテゴリで priority の勝者だけを
+  残すため、睡眠が MEDIA を上書きして寝落ち視聴が見えない。UI 用。
+- **`dev_score` の増加を単独で生産性向上と読まない**。同じ日に `work_score` が落ちていれば
+  業務から個人開発への置き換えであり、総生産量の増加ではない。
+  `dev_score` はアプリ前面時間ベースで、AIペアプロの待ち時間も計上される。
+  Claude アプリ（Mac・スマホ）は 2026-10-03 から常に `DEVELOP / 個人開発(Claude)`。
+  それ以前は未分類で BROWSING に落ちていたので、再処理していない期間と比べるときは注意。
+- **音楽は娯楽と分ける**。`cat_main='MUSIC'`（YouTube Music / Spotify / Amazon Music）は
+  作業BGMなので、ダッシュボードの Leisure（`ENT_CATS = MEDIA/MANGA/GAME/SOCIAL`）から除外している。
+
+### mrt_behavior_slots_15m に --full-refresh を打つ前に確認する
+`bounds` / `time_spine` の窓が全期間を覆っているか。以前は `bounds` が
+`is_incremental()` の外で14日固定だったため、**full-refresh すると
+直近14日だけ作り直して数ヶ月分の履歴を捨てていた**（ダッシュボードの過去日が
+全部空になる）。修正済みだが、この構造のモデルは他にもあり得る。
+
+またスパインを1本の `sequence()` で作らない。Trino の上限は1万件で、
+15分刻みは1日96件なので **104日で頭打ち**になり full-refresh が
+`INVALID_FUNCTION_ARGUMENT` で落ちる。日付 × 日内96オフセットの2段にする。

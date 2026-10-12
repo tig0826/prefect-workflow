@@ -3,25 +3,35 @@ import pandas as pd
 
 from common.trino_api import TrinoAPI
 from common.session_cookies import reuse_session
-from common.exceptions import SessionExpiredException
+from common.exceptions import SessionExpiredException, SiteMaintenanceException
 
 
 class DQXPriceSearch:
+    _cached_df_hash = None  # Class-level cache for item hash metadata
+
     def __init__(self):
         self.base_url = "https://hiroba.dqx.jp/sc/search/bazaar"
         self.trino = TrinoAPI(
             host="trino.mynet", port=80, user="tig", catalog="iceberg"
         )
-        # アイテム名とハッシュの対応表を取得
-        self.df_weapon_hash = self.trino.load("metadata_weapon_hash", "dqx")
-        self.df_armor_hash = self.trino.load("metadata_armor_hash", "dqx")
-        self.df_dougu_hash = self.trino.load("metadata_dougu_hash", "dqx")
-        self.df_hash = pd.concat(
-            [self.df_weapon_hash, self.df_armor_hash, self.df_dougu_hash],
-            ignore_index=True,
-        )
-        # セッションを再利用
+        # Reuse session
         self.session = reuse_session()
+
+        # Load metadata only once per process
+        if DQXPriceSearch._cached_df_hash is None:
+            print("Loading item hash metadata from Trino...")
+            df_weapon_hash = self.trino.load("metadata_weapon_hash", "dqx")
+            df_armor_hash = self.trino.load("metadata_armor_hash", "dqx")
+            df_dougu_hash = self.trino.load("metadata_dougu_hash", "dqx")
+            DQXPriceSearch._cached_df_hash = pd.concat(
+                [df_weapon_hash, df_armor_hash, df_dougu_hash],
+                ignore_index=True,
+            )
+        else:
+            print("Using cached item hash metadata.")
+
+        self.df_hash = DQXPriceSearch._cached_df_hash
+
 
     def get_item_hash(self, item_name):
         item_hash = self.df_hash[self.df_hash["アイテム名"] == item_name]["ハッシュ"]
@@ -41,6 +51,10 @@ class DQXPriceSearch:
         if soup.find("form", {"id": "loginForm"}):
             print("Session expired! Redirected to login page.")
             raise SessionExpiredException("Cookie is no longer valid.")
+        # メンテナンス中はメンテ画面(class="mainte_img")が返る（ログインでも出品なしでもない）
+        if soup.find(class_="mainte_img"):
+            print("DQX hiroba is under maintenance — skipping price fetch.")
+            raise SiteMaintenanceException("DQX hiroba is under maintenance.")
         if not target_response.ok:
             print(
                 "Failed to retrieve data with status code: ",
@@ -50,7 +64,15 @@ class DQXPriceSearch:
         if len(error_elements) > 0:
             print(f"No items found for {item_name}")
             return None
-        soup_tr = soup.find_all(class_="bazaarTable bazaarlist")[0]
+        tables = soup.find_all(class_="bazaarTable bazaarlist")
+        if not tables:
+            # ログイン・メンテ・出品なしのいずれでもない想定外ページ。
+            # サイトの HTML 構造変更の可能性があるので、握りつぶさず気付けるようにする。
+            raise ValueError(
+                f"Unexpected page for '{item_name}': bazaar table not found "
+                "(not login / maintenance / empty-result page)"
+            )
+        soup_tr = tables[0]
         for row in soup_tr.find_all("tr")[1:]:  # 最初の行はヘッダーなのでスキップ
             cells = row.find_all("td")
             # できのよさ

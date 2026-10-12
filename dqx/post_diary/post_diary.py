@@ -27,7 +27,7 @@ def post_discord_link_diary():
                                     publicity=5)
 
 
-@flow(name="post_diary", log_prints=True)
+@flow(log_prints=True)
 def post_diary():
     post_discord_link_diary()
 

@@ -5,15 +5,23 @@
   incremental_strategy='merge'
 ) }}
 
-with d as (
+with
+
+{% if is_incremental() %}
+_bounds as (
+  select coalesce(max(ts_day), date '1970-01-01') as last_day
+  from {{ this }}
+),
+{% endif %}
+
+d as (
   select * from {{ ref('mrt_price_daily') }}
   {% if is_incremental() %}
-    where ts_day >= (
-      select date_add('day', -35, coalesce(max(ts_day), current_date))
-      from {{ this }}
-    )
+    -- 32 days: 31 for MA30 context + 1 new (was 35 — tightened to cut MERGE size)
+    where ts_day >= (select date_add('day', -32, last_day) from _bounds)
   {% endif %}
 ),
+
 w as (
   select
     item_id,
@@ -37,6 +45,7 @@ w as (
     ) as sd30_p5
   from d
 )
+
 select
   item_id,
   ts_day,
@@ -46,7 +55,11 @@ select
   ma30_p5,
   sd30_p5,
   case
-    when coalesce(sd30_p5,0) = 0 then null
+    when coalesce(sd30_p5, 0) = 0 then null
     else (p5_day - ma30_p5) / sd30_p5
   end as z30_p5
 from w
+{% if is_incremental() %}
+-- Only MERGE the new day; historical baseline values don't change
+where ts_day > (select last_day from _bounds)
+{% endif %}

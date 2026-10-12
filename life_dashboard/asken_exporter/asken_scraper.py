@@ -74,13 +74,27 @@ class AskenScraper:
 
             for tag in login_form.find_all("input"):
                 name = tag.get("name")
-                value = tag.get("value", "")
-                if name:
-                    payload[name] = value
+                if not name:
+                    continue
+                if (tag.get("type") or "").lower() == "image":
+                    # 送信ボタンは <input type="image">。ブラウザは値ではなく
+                    # クリック座標 name.x / name.y を送る。これが無いとサーバは
+                    # 「送信ボタンが押された」と認識せず、認証が成立しない。
+                    payload[f"{name}.x"] = "10"
+                    payload[f"{name}.y"] = "10"
+                else:
+                    payload[name] = tag.get("value", "")
 
-            # ユーザーの認証情報でペイロードを上書き
-            payload["data[CustomerMember][email]"] = self.email
-            payload["data[CustomerMember][passwd_plain]"] = self.password
+            # ユーザーの認証情報を現行のフィールド名で上書きする。
+            # 2026-07: あすけんがログインフォームのフィールド名を CakePHP の
+            # `data[CustomerMember][...]` 形式から `CustomerMember[...]` 形式へ変更した。
+            # 旧キーに入れても現行サーバは無視し、フォーム由来の空 `CustomerMember[...]`
+            # がそのまま送られてログインが失敗するため、現行のキー名に合わせる。
+            payload["CustomerMember[email]"] = self.email
+            payload["CustomerMember[passwd_plain]"] = self.password
+            # autologin は hidden(0) と checkbox(1) が同名で二重にある。
+            # 自動ログインは使わないので未チェック相当の 0 に固定する。
+            payload["CustomerMember[autologin]"] = "0"
 
             logging.info("ログインペイロードの構築に成功。")
             return payload
@@ -97,14 +111,26 @@ class AskenScraper:
 
         try:
             logging.info("認証ペイロードを送信中...")
-            self.session.headers.update({"Referer": self.LOGIN_URL})
+            # あすけん(CakePHP)はログイン成功時にセッションIDを再生成(renew)する。
+            # POST 時点でセッションcookie(PSID_0)が存在しないと、302 と会員ID cookie は
+            # 返るのに認証済みセッションが確立されず、以降のページで未ログイン扱いになる
+            # (症状: /wsp/* が /login へリダイレクト)。GET /login では PSID_0 が発行され
+            # ないため、POST 前にプレースホルダを明示的に持たせて renew を成立させる。
+            if not self.session.cookies.get("PSID_0"):
+                self.session.cookies.set(
+                    "PSID_0", "0" * 26, domain="www.asken.jp", path="/"
+                )
+            self.session.headers.update(
+                {"Referer": self.LOGIN_URL, "Origin": self.BASE_URL}
+            )
             response = self.session.post(self.LOGIN_URL, data=payload)
             response.raise_for_status()
             time.sleep(2)  # サーバーへの負荷軽減
 
-            # ログイン成功を判定 (レスポンス内容にログアウトリンクがあるか)
-            soup = BeautifulSoup(response.text, "html.parser")
-            if not soup.select_one('a[href*="logout"]'):
+            # ログイン成功を判定。認証済みページはヘッダに logged-in マーカーと
+            # ログアウトリンク(/login/logout)を持つ。未認証だとログインフォームに戻る。
+            html = response.text
+            if 'class="logged-in"' not in html and "/login/logout" not in html:
                 raise PermissionError(
                     "ログインに失敗しました。認証情報が間違っているか、サイトの仕様が変更された可能性があります。"
                 )
@@ -158,6 +184,20 @@ class AskenScraper:
                         "quantity": qty_tag.text.strip() if qty_tag else None,
                         "kcal": kcal,
                     })
+
+            # 品目が空の場合、「食べなかった（欠食）」と「未記録」を区別する。
+            # あすけんでは欠食は0kcalの記録として「食べなかった」と表示され、
+            # 未記録は「まだ記録されていません。」と表示される。両者を空欄で潰すと
+            # 「まだ記録していない」のか「本当に食べていない」のか区別できないため、
+            # 欠食の場合のみ「食べなかった」を0kcalの品目として残す（未記録は空のまま）。
+            # 未記録の間食にも「間食を 食べなかった」導線があるため、未記録判定を先に行う。
+            if not items:
+                section_text = section.get_text()
+                if "まだ記録されていません" in section_text:
+                    pass  # 未記録: 空のまま
+                elif "食べなかった" in section_text:
+                    items = [{"name": "食べなかった", "quantity": None, "kcal": 0.0}]
+
             records[category] = {"total_kcal": total_kcal, "items": items}
         return records
 

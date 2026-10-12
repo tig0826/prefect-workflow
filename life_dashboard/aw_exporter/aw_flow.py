@@ -10,6 +10,52 @@ from common.storage_tasks import save_json_to_s3
 from common.trino_tasks import create_external, sync_table_partition
 
 
+# scraper 側は AW の全バケットを動的に取得して bronze に保存しているため、
+# ここに並べるのは「Trino の外部テーブルとして登録するもの」だけ。
+# 未登録のバケットは S3 にデータがあっても SQL から見えない点に注意。
+#
+# 除外しているバケット（2026-08-27 時点で直近30日0件の死んだバケット）:
+#   aw-watcher-window_tig.local / aw-watcher-afk_tig.local / aw-stopwatch
+REGISTERED_BUCKETS = [
+    "aw-watcher-afk_A1002995.local",
+    "aw-watcher-afk_tignoMacBook-Pro.local",
+    "aw-watcher-android-test",
+    "aw-watcher-android-unlock",
+    # 2026-08-27 追加。bronze には元々溜まっていたが外部テーブル未登録で
+    # SQL から見えていなかった。media.playback は「前面にあった」と
+    # 「実際に再生していた」の区別、web.tab.current は BROWSING の中身
+    # （現状 1.9h/日が内容不明）を開けるため AI FB の材料として重要。
+    "aw-watcher-android-media",
+    "aw-watcher-android-web-chrome",
+    "aw-watcher-window_A1002995.local",
+    "aw-watcher-window_tignoMacBook-Pro.local",
+    "aw-watcher-window_DESKTOP-O8TFAG0",
+    "aw-watcher-afk_DESKTOP-O8TFAG0",
+]
+
+
+def bucket_to_table_name(bucket_name: str) -> str:
+    """AW のバケット ID を bronze の外部テーブル名に変換する。
+
+    例: aw-watcher-android-web-chrome -> aw_android_web_chrome_external
+        aw-watcher-afk_A1002995.local -> aw_afk_a1002995_external
+    """
+    clean_name = bucket_name.replace("aw-watcher-", "")
+    if clean_name.endswith(".local"):
+        clean_name = clean_name[:-6]
+    clean_name = f"aw_{clean_name}".replace("-", "_").lower()
+    return f"{clean_name}_external"
+
+
+def bronze_prefix(bucket_name: str, target_date: date) -> str:
+    """bronze 上のパーティションプレフィックス。bucket 名がそのままテーブル名。"""
+    return f"aw/{bucket_name}/dt={target_date.strftime('%Y-%m-%d')}"
+
+
+def events_to_jsonl(events: list) -> str:
+    return "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n"
+
+
 @task(retries=2, retry_delay_seconds=300, name="Scrape ActivityWatch Daily Data")
 def scrape_aw_data(target_date: date) -> dict:
     """AWから指定日のデータをスクレイピングする"""
@@ -46,13 +92,9 @@ def aw_flow(target_date: Optional[date] = None):
                 if not events:
                     continue  # 空のバケツは無視
                 # バケツ名をそのままディレクトリ（テーブル）名として扱う
-                jsonl_lines = [
-                    json.dumps(event, ensure_ascii=False) for event in events
-                ]
-                jsonl_data = "\n".join(jsonl_lines) + "\n"
                 save_json_to_s3(
-                    data=jsonl_data,
-                    prefix=f"aw/{bucket_name}/dt={date_str}",
+                    data=events_to_jsonl(events),
+                    prefix=bronze_prefix(bucket_name, d),
                     file_name="data.jsonl",
                 )
                 print(f"Bronze: [{bucket_name}] に {len(events)} 件のデータを保存完了")
@@ -62,23 +104,8 @@ def aw_flow(target_date: Optional[date] = None):
             has_error = True
     if has_error:
         raise RuntimeError("一部の日付の処理でエラーが発生")
-    bucket_list = [
-        "aw-watcher-afk_A1002995.local",
-        "aw-watcher-afk_tignoMacBook-Pro.local",
-        "aw-watcher-android-test",
-        "aw-watcher-android-unlock",
-        "aw-watcher-window_A1002995.local",
-        "aw-watcher-window_tignoMacBook-Pro.local",
-        "aw-watcher-window_DESKTOP-O8TFAG0",
-        "aw-watcher-afk_DESKTOP-O8TFAG0",
-    ]
-    for bucket_name in bucket_list:
-        clean_name = bucket_name.replace("-", "_").replace(".", "_").lower()
-        clean_name = bucket_name.replace("aw-watcher-", "")
-        if clean_name.endswith(".local"):
-            clean_name = clean_name[:-6]
-        clean_name = f"aw_{clean_name}".replace("-", "_").lower()
-        aw_tablename = f"{clean_name}_external"
+    for bucket_name in REGISTERED_BUCKETS:
+        aw_tablename = bucket_to_table_name(bucket_name)
         create_external(
             system_name="aw",
             params={"aw_tablename": aw_tablename, "aw_bucketname": bucket_name},
