@@ -28,6 +28,7 @@ from prefect.blocks.system import Secret
 from ai_feedback import discovery
 from ai_feedback import issue_tracker as it
 from ai_feedback import sql_tool
+from common.jp_holidays import non_workday_sql_list
 from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
@@ -38,6 +39,7 @@ MODEL = "gemini-pro-latest"
 THINKING_BUDGET = 16384      # 週1回なので厚く使う
 MAX_TOOL_TURNS = 20          # SQL 探索の往復上限
 SLOT = "weekly"
+_NON_WORKDAYS = non_workday_sql_list()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -92,7 +94,13 @@ def fetch_weekly_comparison(week_end: str) -> dict:
                round(avg(lightly_active_minutes), 0) AS light_active_min,
                round(avg(fairly_active_minutes + very_active_minutes), 1) AS mod_vig_active_min,
                round(avg(very_active_minutes), 1) AS very_active_min,
-               round(avg(work_core_sec)/3600.0, 2) AS work_h,
+               -- 業務は勤務日（土日・祝日・休暇を除く）だけで平均する（本人の要望 2026-10-10）。
+               -- 祝日のある週は休日の 0 時間で薄まり、業務が減ったように見えていた
+               -- ★外側の SELECT は CTE d から読むので、別名 f は使えない（2026-10-12 に f.target_date で失敗した）
+               round(avg(CASE WHEN day_of_week(target_date) <= 5
+                               AND target_date NOT IN ({_NON_WORKDAYS})
+                              THEN coalesce(work_core_sec, 0) END)/3600.0, 2) AS work_h_per_workday,
+               count_if(day_of_week(target_date) <= 5 AND target_date NOT IN ({_NON_WORKDAYS})) AS n_workdays,
                round(avg(dev_core_sec)/3600.0, 2) AS dev_h,
                count_if(work_core_sec IS NOT NULL) AS n_work,
                round(avg(work_score), 1) AS work_score,
@@ -192,7 +200,9 @@ def fetch_daytype_comparison(week_end: str, days: int = 28) -> dict:
     df = TRINO.execute_query(f"""
         WITH d AS (
             SELECT f.target_date,
-                   CASE WHEN day_of_week(f.target_date) >= 6 THEN 'weekend' ELSE 'weekday' END AS daytype,
+                   -- 祝日・休暇も休日側に入れる（2026-10-10。祝日の業務0時間が平日の平均を下げていた）
+                   CASE WHEN day_of_week(f.target_date) >= 6 OR f.target_date IN ({_NON_WORKDAYS})
+                        THEN 'weekend' ELSE 'weekday' END AS daytype,
                    f.total_minutes_asleep, f.resting_heart_rate, f.steps,
                    f.sedentary_minutes, f.lightly_active_minutes,
                    f.fairly_active_minutes, f.very_active_minutes,
@@ -910,6 +920,18 @@ def ai_feedback_weekly_flow(week_end: str | None = None, force: bool = False):
     issue_ids = register_experiments(analysis.get("experiments") or [], week_end)
     save_weekly(week_end, analysis, critic, ctx)
 
+    # 週次レポートをメールで送る（2026-10-10 追加）。分析を保存した後でないとAI分析の無い
+    # レポートになるので、必ず save_weekly の後に呼ぶ。送れなくても週次自体は成功扱いにする
+    # （再送は `Weekly Report Mail/life_weekly_report_mail_manual` を week_end つきで実行）。
+    mail_sent = False
+    try:
+        from ai_feedback.weekly_report_mail import send_weekly_report_mail
+
+        send_weekly_report_mail(week_end)
+        mail_sent = True
+    except Exception as e:  # noqa: BLE001
+        print(f"⚠️  週次レポートのメール送信に失敗: {e}")
+
     return {
         "skipped": False,
         "insights": len(analysis.get("insights") or []),
@@ -917,6 +939,7 @@ def ai_feedback_weekly_flow(week_end: str | None = None, force: bool = False):
         "experiment_issue_ids": issue_ids,
         "missed_by_critic": len(critic.get("missed") or []),
         "instrumentation_proposals": proposal_result,
+        "mail_sent": mail_sent,
     }
 
 

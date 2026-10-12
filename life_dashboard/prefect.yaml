@@ -175,6 +175,28 @@ deployments:
     parameters: {}
     enforce_parameter_schema: false
 
+  # 月次（長期）分析。毎月1日 08:10 に前の月までを振り返る。処方は出さない。
+  # 結果は /trends（長期トレンド）に出て、メールでも届く。
+  # 手動: prefect deployment run 'AI Feedback Monthly/life_ai_feedback_monthly' -p month=2026-09 -p force=true
+  - name: life_ai_feedback_monthly
+    tags: *common_tags
+    entrypoint: ai_feedback/monthly_flow.py:ai_feedback_monthly_flow
+    work_pool: *common_work_pool
+    schedules:
+      - cron: "10 8 1 * *"
+        timezone: "Asia/Tokyo"
+    parameters: {}
+    enforce_parameter_schema: false
+
+  # 週次レポートのメール再送用。スケジュールなし（通常は週次フローの最後で送られる）。
+  # week_end に対象週の日曜（または週内の任意の日）を入れて実行する。省略時は終わった最新の週。
+  - name: life_weekly_report_mail_manual
+    tags: *common_tags
+    entrypoint: ai_feedback/weekly_report_mail.py:weekly_report_mail_flow
+    work_pool: *common_work_pool
+    parameters: {}
+    enforce_parameter_schema: false
+
   # 手動リラン用（起床検知を待たずに生成したいとき）。スケジュールなし。
   - name: life_ai_feedback_daily_manual
     tags: *common_tags
