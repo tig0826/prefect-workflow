@@ -92,7 +92,20 @@ def fitbit_flow(target_date: Optional[date] = None):
             raw_data = scrape_fitbit_data(client_id, client_secret, current_token, d)
 
             # データが存在するかチェック（dateキー以外に値があるか）
-            if raw_data and any(bool(v) for k, v in raw_data.items() if k != "date"):
+            #
+            # scrape_fitbit_data が返すのは実データそのものではなく
+            # {"raw_json": <実データのJSON文字列>, "dt": ...} というラッパーなので、
+            # 空判定は中身をほどいてから行う必要がある。ラッパーのキーを直接見ると
+            # 常に非空文字列で真になり、API が全滅して中身が全 null のレコードでも
+            # 保存されて正常なパーティションを上書きしてしまう
+            # （silver 側で 0歩・0kcal が恒久的に凍結する原因になっていた）。
+            payload = json.loads(raw_data["raw_json"]) if raw_data else {}
+            fetched = {k: v for k, v in payload.items() if k != "date"}
+            missing = [k for k, v in fetched.items() if not v]
+            if missing:
+                print(f"{date_str} の取得できなかった項目: {missing}")
+
+            if any(fetched.values()):
                 # 🌟 極めて重要: TrinoのBronzeテーブル(raw_json, dt)に合わせたラッパーを作成
                 wrapped_payload = {
                     "raw_json": json.dumps(raw_data, ensure_ascii=False),

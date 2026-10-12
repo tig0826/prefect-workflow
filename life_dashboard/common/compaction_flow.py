@@ -1,53 +1,129 @@
 """
 Iceberg table compaction flow.
 
-Runs weekly to prevent small-file accumulation in incremental merge tables.
+Runs daily to prevent small-file accumulation in incremental merge tables.
+
+Targets are discovered mechanically from the dbt-managed lifeos schemas
+(life_silver / life_gold) rather than a hardcoded list, so newly added dbt
+models are picked up automatically. The raw ingestion layers (life / life_bronze)
+are intentionally excluded: they hold non-Iceberg external tables that don't
+support EXECUTE optimize.
 """
 import logging
 from prefect import flow, task
+from common.retry_policy import STORAGE_RETRY
 from common.trino_api import TrinoAPI
 
 log = logging.getLogger(__name__)
 
 TRINO = TrinoAPI(host="trino.mynet", port=80, user="tig", catalog="iceberg")
 
-ICEBERG_TABLES = [
-    # Silver
-    ("life_silver", "aw_window_events"),
-    ("life_silver", "aw_afk_events"),
-    ("life_silver", "asken_meal"),
-    ("life_silver", "asken_nutrition"),
-    ("life_silver", "fitbit_activity"),
-    ("life_silver", "fitbit_heartrate"),
-    ("life_silver", "fitbit_sleep"),
-    ("life_silver", "fitbit_summary"),
-    # Intermediate
-    ("life_gold", "int_aw_afk"),
-    ("life_gold", "int_aw_categorized"),
-    ("life_gold", "int_fitbit_activity"),
-    ("life_gold", "int_fitbit_hr_gaps"),
-    ("life_gold", "int_fitbit_sleep"),
-    # Gold marts
-    ("life_gold", "mrt_aw_daily_work_summary"),
-    ("life_gold", "mrt_behavior_slots_15m"),
-    ("life_gold", "mrt_fitness_daily_summary"),
-]
+# dbt writes managed Iceberg tables here (see dbt_lifeos/dbt_project.yml:
+# silver -> life_silver, intermediate/gold -> life_gold).
+TARGET_SCHEMAS = ["life_silver", "life_gold"]
 
 
-@task(name="Optimize Iceberg table", retries=1, retry_delay_seconds=10)
-def optimize_table(schema: str, table: str):
-    sql = f"ALTER TABLE {schema}.{table} EXECUTE optimize"
-    TRINO.execute_action(sql)
-    log.info(f"Optimized: {schema}.{table}")
+@task(name="Discover Iceberg tables", **STORAGE_RETRY)
+def discover_tables() -> list[tuple[str, str]]:
+    """List base tables in the target schemas, skipping dbt transient temp tables.
+
+    Views (dbt models materialized as view) are excluded via table_type: they
+    don't support ALTER TABLE EXECUTE optimize.
+    """
+    schema_list = ", ".join(f"'{s}'" for s in TARGET_SCHEMAS)
+    df = TRINO.execute_query(
+        "SELECT table_schema, table_name "
+        "FROM iceberg.information_schema.tables "
+        f"WHERE table_schema IN ({schema_list}) "
+        "AND table_type = 'BASE TABLE' "
+        "AND table_name NOT LIKE '%__dbt_tmp' "
+        "ORDER BY table_schema, table_name"
+    )
+    tables = [(row.table_schema, row.table_name) for row in df.itertuples()]
+    log.info(f"Discovered {len(tables)} table(s) across {TARGET_SCHEMAS}")
+    return tables
 
 
-@flow(name="Iceberg Compaction", log_prints=True)
-def iceberg_compaction_flow():
-    """Compact all Iceberg tables to merge small files. Runs weekly."""
-    print("=== Compacting all Iceberg tables ===")
-    for schema, table in ICEBERG_TABLES:
-        optimize_table(schema, table)
-    print("Compaction complete.")
+# Maintenance policy (shared vocabulary with dqx/iceberg_maintenance).
+FILE_SIZE_THRESHOLD = "128MB"  # optimize rewrites only files smaller than this
+RETENTION = "7d"               # snapshots / orphan files older than this are reclaimed
+
+# Raised when a maintenance procedure is run against a non-Iceberg external
+# table or a view. Those don't support it, so skip rather than fail the flow.
+_SKIP_MARKERS = ("Not an Iceberg table", "is not supported for views")
+
+
+def _execute(action: str, sql: str, schema: str, table: str) -> bool:
+    """Run a maintenance DDL; skip relations that don't support it.
+
+    Returns True if it ran, False if skipped. Real failures propagate (with the
+    task's retries) so a genuine storage error still surfaces.
+    """
+    try:
+        TRINO.execute_action(sql)
+        log.info(f"{action}: {schema}.{table}")
+        return True
+    except Exception as e:
+        if any(m in str(e) for m in _SKIP_MARKERS):
+            log.warning(f"Skipped {action} (unsupported relation): {schema}.{table}")
+            return False
+        raise
+
+
+@task(name="Maintain Iceberg table", **STORAGE_RETRY)
+def maintain_table(schema: str, table: str, reclaim: bool = False):
+    """optimize (always) -> expire_snapshots + remove_orphan_files (only if reclaim).
+
+    optimize compacts small files into ~128MB ones and is cheap; it is the daily
+    job that keeps the pipeline healthy.
+
+    The reclaim ops are gated behind `reclaim` because BOTH are brutally slow on
+    the single NFS/ZFS MinIO backend: expire_snapshots must delete the data files
+    of every expiring snapshot (a huge one-time backlog since reclaim had never
+    run), and remove_orphan_files recursively LISTs each table's whole object-store
+    tree. Running them daily on all tables turned a ~10min job into a 12h+ run that
+    hammered MinIO all day and starved the pipeline (2026-07-11). They run weekly.
+    """
+    rel = f'"{schema}"."{table}"'
+    if not _execute(
+        "Optimized",
+        f"ALTER TABLE {rel} EXECUTE optimize(file_size_threshold => '{FILE_SIZE_THRESHOLD}')",
+        schema, table,
+    ):
+        return  # non-Iceberg / view: reclaim ops won't apply either
+    if reclaim:
+        _execute(
+            "Expired snapshots",
+            f"ALTER TABLE {rel} EXECUTE expire_snapshots(retention_threshold => '{RETENTION}')",
+            schema, table,
+        )
+        _execute(
+            "Removed orphan files",
+            f"ALTER TABLE {rel} EXECUTE remove_orphan_files(retention_threshold => '{RETENTION}')",
+            schema, table,
+        )
+
+
+# Runaway guard: on 2026-07-11 the first run with reclaim enabled ran 12h+ and
+# hammered MinIO all day. optimize-only should finish in ~10min; the weekly
+# reclaim run is heavier but this caps it -- hitting it means something is wrong.
+COMPACTION_TIMEOUT_SECONDS = 10800  # 3h
+
+
+@flow(name="Iceberg Compaction", log_prints=True, timeout_seconds=COMPACTION_TIMEOUT_SECONDS)
+def iceberg_compaction_flow(reclaim: bool = False):
+    """Compact + optionally reclaim all lifeos Iceberg tables.
+
+    reclaim=False (daily): optimize only -- fast, no MinIO stress.
+    reclaim=True  (weekly): also expire_snapshots + remove_orphan_files -- heavy
+    on the NFS-backed MinIO, so confined to one off-peak run per week.
+    """
+    mode = "optimize + expire + remove_orphan_files" if reclaim else "optimize only"
+    print(f"=== Maintaining all lifeos Iceberg tables ({mode}) ===")
+    tables = discover_tables()
+    for schema, table in tables:
+        maintain_table(schema, table, reclaim=reclaim)
+    print(f"Maintenance complete ({len(tables)} tables).")
 
 
 if __name__ == "__main__":

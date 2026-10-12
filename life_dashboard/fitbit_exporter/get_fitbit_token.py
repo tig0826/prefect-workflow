@@ -28,18 +28,31 @@ def save_token(token: dict):
 def main():
     # OAuthクライアントの初期化
     server = FitbitOauth2Client(CLIENT_ID, CLIENT_SECRET)
-    # 必要な権限(Scope)を全て指定する
+    # 必要な権限(Scope)を全て指定する。
+    #
+    # 2026-08-27 追加: 呼吸数・SpO2・皮膚温・心肺フィットネスは専用スコープが必要で、
+    # 旧トークン（activity/heartrate/location/nutrition/profile/settings/sleep/social/weight）
+    # では該当エンドポイントが 403 PERMISSION_DENIED になる。実測で確認済み。
+    # なお HRV（/1/user/-/hrv/...）と AZM は heartrate/activity で取得できるため
+    # 再認証しなくても使える。
+    #
+    # 注意: これらは基本的に睡眠中の計測なので、時計を外した夜・寝ていない夜は
+    # 値が出ない（HRV は 60日中33日しか取れていない）。「欠測＝改善」と読まないこと。
     url, _ = server.authorize_token_url(
         redirect_uri=REDIRECT_URI,
         scope=[
             "activity",
+            "cardio_fitness",
             "heartrate",
             "location",
             "nutrition",
+            "oxygen_saturation",
             "profile",
+            "respiratory_rate",
             "settings",
             "sleep",
             "social",
+            "temperature",
             "weight",
         ],
     )

@@ -56,6 +56,7 @@ COPY post_diary/ /opt/prefect/post_diary
 COPY keepalive_streamlit/ /opt/prefect/keepalive_streamlit
 COPY sync_supabase_mrt_price_hourly /opt/prefect/sync_supabase_mrt_price_hourly
 COPY notify_cookie_expiration/ /opt/prefect/notify_cookie_expiration
+COPY iceberg_maintenance/ /opt/prefect/iceberg_maintenance
 COPY common/ /opt/prefect/common
 
 # dbt のプロファイル配置
